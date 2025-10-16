@@ -14,7 +14,6 @@ env:
   IOS_DEVICE: "iPhone 16 Pro"
   IOS_DEVICE_2: "iPhone 16 Plus"
   IOS_VERSION: "18"
-  IOS_APP: "./apps/UIKitCatalog-iphonesimulator.app"
   NODE_OPTIONS: "--max-old-space-size=4096"
   MAX_INSTANCES: "2"
   WDA_PORT_1: "8100"
@@ -25,6 +24,7 @@ env:
 jobs:
   ios-tests:
     name: iOS • WDIO + Appium + Allure (Self-Hosted)
+    # Make sure these match your self-hosted runner labels
     runs-on: [self-hosted, macOS, Xcode16, iOS18]
     timeout-minutes: 60
 
@@ -32,7 +32,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Select Xcode (/Applications/Xcode.app)
         shell: bash
         run: |
           set -euo pipefail
@@ -49,8 +49,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Build the UIKitCatalog simulator .app and export IOS_APP (absolute path)
+      - name: Build UIKitCatalog (iOS Simulator)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJ="node_modules/ios-uicatalog/UIKitCatalog/UIKitCatalog.xcodeproj"
+          SCHEME="UIKitCatalog"
+          DERIVED="$PWD/build-uicatalog"
+          xcodebuild \
+            -project "$PROJ" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -derivedDataPath "$DERIVED" \
+            build
+          APP_PATH="$DERIVED/Build/Products/Release-iphonesimulator/UIKitCatalog-iphonesimulator.app"
+          if [[ ! -d "$APP_PATH" ]]; then
+            echo "❌ Build succeeded but app not found at $APP_PATH"
+            ls -R "$DERIVED/Build/Products" || true
+            exit 1
+          fi
+          echo "IOS_APP=$APP_PATH" >> "$GITHUB_ENV"
+
       ##############################################
-      # 🚀 BOOT SIMULATORS (NO ENV WRITE HERE)
+      # 🚀 BOOT TWO SIMULATORS (no env writes here)
       ##############################################
       - name: Boot Simulators (safe)
         id: boot
@@ -58,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Find iOS 18 runtime
+          # Find iOS 18 runtime visible on this Mac
           RUNTIME_ID="$(xcrun simctl list runtimes | awk '/iOS 18/ && $0 !~ /unavailable/ {gsub(/[()]/,""); print $NF}' | head -n1)"
           if [[ -z "$RUNTIME_ID" ]]; then
             echo "❌ No iOS 18 runtime visible"; exit 1
@@ -72,11 +95,11 @@ jobs:
             echo "❌ Could not resolve device types"; exit 1
           fi
 
-          # Unique names per run
+          # Unique names per run to avoid collisions
           NAME1="CI-DEVICE-1-${GITHUB_RUN_ID}"
           NAME2="CI-DEVICE-2-${GITHUB_RUN_ID}"
 
-          # Clean previous matching simulators
+          # Clean previous matching simulators (best effort)
           xcrun simctl delete unavailable || true
           for n in "$NAME1" "$NAME2"; do
             xcrun simctl list devices | awk -v p="$n" -F '[()]' '$0 ~ p {print $2}' | while read -r d; do
@@ -99,13 +122,13 @@ jobs:
           UDID1="$(create_only "$NAME1" "$TYPE1")"
           UDID2="$(create_only "$NAME2" "$TYPE2")"
 
-          # Boot silently to avoid BackBoard/Monitoring logs
+          # Boot silently to prevent any logs polluting later steps
           xcrun simctl boot "$UDID1" >/dev/null 2>&1 || true
           xcrun simctl boot "$UDID2" >/dev/null 2>&1 || true
           xcrun simctl bootstatus "$UDID1" -b >/dev/null 2>&1
           xcrun simctl bootstatus "$UDID2" -b >/dev/null 2>&1
 
-          # Store clean UDIDs in separate files
+          # Store clean UDIDs in separate files (single line each)
           printf '%s\n' "$UDID1" > udid1.txt
           printf '%s\n' "$UDID2" > udid2.txt
 
@@ -119,6 +142,7 @@ jobs:
           read -r UDID1 < udid1.txt
           read -r UDID2 < udid2.txt
 
+          # Validate UUID format before exporting
           echo "$UDID1" | grep -Eq '^[0-9A-F-]{36}$' || { echo "❌ UDID1 invalid: $UDID1"; exit 1; }
           echo "$UDID2" | grep -Eq '^[0-9A-F-]{36}$' || { echo "❌ UDID2 invalid: $UDID2"; exit 1; }
 
@@ -128,11 +152,14 @@ jobs:
           } >> "$GITHUB_ENV"
 
       ##############################################
-      # 🧪 RUN WDIO TESTS
+      # 🧪 RUN WDIO TESTS (parallel caps)
       ##############################################
       - name: Run WDIO Tests
         run: npm run test:ios:ci
 
+      ##############################################
+      # 📊 ALLURE REPORTS & ARTIFACTS
+      ##############################################
       - name: Generate Allure HTML
         if: always()
         run: npm run allure:generate
