@@ -9,8 +9,11 @@
     "test:ios": "wdio wdio.conf.js",
     "test:ios:ci": "wdio wdio.conf.js --suite smoke || wdio wdio.conf.js",
     "allure:generate": "allure generate --clean ./allure-results -o ./allure-report",
-    "allure:open": "allure open ./allure-report"
+    "allure:open": "allure open ./allure-report",
+    "clean:allure": "rm -rf ./allure-results ./allure-report",
+    "report:fresh": "npm run clean:allure && wdio wdio.conf.js && allure generate --clean ./allure-results -o ./allure-report && allure open ./allure-report"
   },
+  "engines": { "node": ">=20 <=22" },
   "devDependencies": {
     "@wdio/allure-reporter": "^9.20.0",
     "@wdio/appium-service": "^9.20.0",
