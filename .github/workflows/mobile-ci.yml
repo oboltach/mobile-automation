@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Exact device names available on your Mac
+  # Exact device names available on your Mac (from your listing)
   IOS_DEVICE: "iPhone 16 Pro"
   IOS_DEVICE_2: "iPhone 16 Plus"
   IOS_VERSION: "18"                        # major; we’ll pick a matching installed runtime via simctl
@@ -36,8 +36,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Ensure Xcode 16.1 at /Applications/Xcode.app is selected
-      - name: Ensure Xcode 16.1 is active
+      # Ensure your Xcode at /Applications/Xcode.app is selected
+      - name: Ensure Xcode is active
         shell: bash
         run: |
           set -euo pipefail
@@ -86,22 +86,22 @@ jobs:
           echo "== RUNTIMES (simctl) =="
           xcrun simctl list runtimes
 
-          # ---- Pick a runtime using simctl only ----
+          # ---- Pick a runtime using simctl (exclude only 'unavailable') ----
           desired_major="${IOS_VERSION}"   # e.g. "18"
-          RUNTIME_ID="$(xcrun simctl list runtimes | \
-            awk '/iOS/ && /Available|available/ { gsub(/[()]/,""); print $NF }' | \
-            grep -E "iOS-${desired_major}($|-)" | head -n 1 || true)"
+          runtime_lines="$(xcrun simctl list runtimes | awk 'BEGIN{IGNORECASE=1} /iOS/ && $0 !~ /unavailable/ { gsub(/[()]/,""); print $0 }')"
+          RUNTIME_ID="$(echo "${runtime_lines}" | awk '{print $NF}' | grep -E "iOS-${desired_major}($|-)" | head -n 1 || true)"
           if [[ -z "${RUNTIME_ID}" ]]; then
-            # fallback to the last available iOS runtime (often the latest)
-            RUNTIME_ID="$(xcrun simctl list runtimes | \
-              awk '/iOS/ && /Available|available/ { gsub(/[()]/,""); print $NF }' | tail -n 1 || true)"
+            # fallback: take the last available iOS runtime ID (often latest)
+            RUNTIME_ID="$(echo "${runtime_lines}" | awk '{print $NF}' | tail -n 1 || true)"
           fi
           if [[ -z "${RUNTIME_ID}" ]]; then
             echo "❌ No iOS runtime visible via simctl. Check Xcode selection & runtime install."
+            echo "Debug dump:"
+            echo "${runtime_lines}"
             exit 1
           fi
           echo "Using runtime: ${RUNTIME_ID}"
-          # ------------------------------------------
+          # ------------------------------------------------------------------
 
           resolve_type () {
             name="$1"
@@ -146,7 +146,7 @@ jobs:
           echo "✅ Both simulators are ready."
           xcrun simctl list devices | sed -n '1,200p' || true
 
-      # Appium server is started by WDIO's Appium service in your config
+      # Appium server is started by the WDIO Appium service in your config
       - name: Run WDIO (smoke on PRs; full fallback)
         run: npm run test:ios:ci
 
