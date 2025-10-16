@@ -11,15 +11,22 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # CI defaults: target a runtime that exists on current macOS runners
-  IOS_DEVICE: "iPhone 16"
-  IOS_VERSION: "18.0"
+  # Target exact names that exist on Xcode 16:
+  IOS_DEVICE: "iPhone 16 Pro"
+  IOS_DEVICE_2: "iPhone 16 Plus"
+  IOS_VERSION: "18.0"                      # will fall back to latest iOS if 18.0 not present
   IOS_APP: "./apps/UIKitCatalog-iphonesimulator.app"
   NODE_OPTIONS: "--max-old-space-size=4096"
+  MAX_INSTANCES: "2"                       # WDIO global; run both caps concurrently
+  # Distinct per-device ports (match your wdio.conf.js usage)
+  WDA_PORT_1: "8100"
+  WDA_PORT_2: "8101"
+  WK_PROXY_PORT_1: "27753"
+  WK_PROXY_PORT_2: "27754"
 
 jobs:
   ios-tests:
-    name: iOS • WDIO + Appium + Allure
+    name: iOS • WDIO + Appium + Allure (2 sims)
     runs-on: macos-15
     timeout-minutes: 60
 
@@ -27,11 +34,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Pin Xcode so we know which iOS runtimes are available (iOS 18.x)
-      - name: Select Xcode
+      # Ensure iOS 18 runtimes
+      - name: Select Xcode 16.1
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.0'   # 16.0/16.1 both have iOS 18.x runtimes on macOS-15
+          xcode-version: '16.1'
 
       - name: Use Node.js 20 (with npm cache)
         uses: actions/setup-node@v4
@@ -49,50 +56,83 @@ jobs:
           xcrun simctl list runtimes
           xcrun simctl list devices available
 
-      - name: Boot Simulator ($IOS_DEVICE $IOS_VERSION)
+      - name: Boot 2 Simulators ($IOS_DEVICE / $IOS_DEVICE_2 @ $IOS_VERSION)
         shell: bash
         run: |
           set -euo pipefail
-          DEV="${IOS_DEVICE}"
 
-          echo "==> Selecting runtime for iOS ${IOS_VERSION}"
-          # Try exact version first; otherwise fall back to latest iOS runtime on the image
-          RUNTIME_ID=$(xcrun simctl list runtimes | awk -v v="$IOS_VERSION" '
-            /iOS/ && /Available/ && $0 ~ v {
-              gsub(/[()]/, ""); print $NF; exit
-            }')
+          pick_runtime () {
+            local desired="$1"
+            local rid
+            rid=$(xcrun simctl list runtimes | awk -v v="$desired" '
+              /iOS/ && /Available|available/ && $0 ~ v { gsub(/[()]/,""); print $NF; exit }')
+            if [[ -z "${rid:-}" ]]; then
+              rid=$(xcrun simctl list runtimes | awk '
+                /iOS/ && /Available|available/ { gsub(/[()]/,""); print $NF }' | tail -n1)
+            fi
+            echo "$rid"
+          }
+
+          resolve_type () {
+            local name="$1"
+            local tid
+            # exact match by visible name (left side before '(')
+            tid=$(xcrun simctl list devicetypes | awk -F '[()]' -v n="$name" '$1 ~ ("^" n "$") {print $2; exit}')
+            echo "$tid"
+          }
+
+          create_and_boot () {
+            local dev_name="$1"
+            local runtime_id="$2"
+            local idx="$3"
+
+            echo "==> Resolving type for '${dev_name}'"
+            local type_id
+            type_id=$(resolve_type "$dev_name")
+            if [[ -z "${type_id:-}" ]]; then
+              echo "❌ Device type '${dev_name}' not found."
+              xcrun simctl list devicetypes
+              exit 1
+            fi
+            echo "Device type id: ${type_id}"
+
+            local sim_name="${dev_name} (CI ${GITHUB_RUN_ID}-${idx})"
+            echo "==> Creating simulator '${sim_name}' with runtime ${runtime_id}"
+            local udid
+            udid=$(xcrun simctl create "${sim_name}" "${type_id}" "${runtime_id}")
+            if [[ -z "${udid:-}" ]]; then
+              echo "❌ Failed to create simulator for ${dev_name}"
+              exit 1
+            fi
+            echo "UDID: ${udid}"
+
+            echo "==> Booting ${dev_name}"
+            xcrun simctl boot "${udid}" || true
+            xcrun simctl bootstatus "${udid}" -b
+
+            # export to job env for WDIO caps
+            if [[ "$idx" == "1" ]]; then
+              echo "IOS_UDID=${udid}" >> "$GITHUB_ENV"
+            else
+              echo "IOS_UDID_2=${udid}" >> "$GITHUB_ENV"
+            fi
+          }
+
+          echo "==> Selecting iOS runtime (desired ${IOS_VERSION})"
+          RUNTIME_ID=$(pick_runtime "${IOS_VERSION}")
           if [[ -z "${RUNTIME_ID:-}" ]]; then
-            echo "⚠️  iOS ${IOS_VERSION} not found; falling back to latest iOS runtime on runner…"
-            RUNTIME_ID=$(xcrun simctl list runtimes | awk '
-              /iOS/ && /Available/ { gsub(/[()]/, ""); print $NF }' | tail -n1)
+            echo "❌ No iOS runtime found on this runner."
+            exit 1
           fi
           echo "Using runtime: ${RUNTIME_ID}"
 
-          echo "==> Resolving device type id for '${DEV}'"
-          TYPE_ID=$(xcrun simctl list devicetypes | awk -v n="$DEV" -F '[()]' '$0 ~ n {print $2; exit}')
-          if [[ -z "${TYPE_ID:-}" ]]; then
-            echo "❌ Device type '${DEV}' not available on this runner."
-            xcrun simctl list devicetypes
-            exit 1
-          fi
-          echo "Device type id: ${TYPE_ID}"
+          create_and_boot "${IOS_DEVICE}"   "${RUNTIME_ID}" 1
+          create_and_boot "${IOS_DEVICE_2}" "${RUNTIME_ID}" 2
 
-          echo "==> Reusing or creating simulator"
-          UDID=$(xcrun simctl list devices available | awk -v n="$DEV" -v r="$RUNTIME_ID" '
-            $0 ~ n && $0 ~ r { gsub(/[()]/,""); print $NF; exit }')
-          if [[ -z "${UDID:-}" ]]; then
-            echo "Creating simulator '${DEV}' (${TYPE_ID}, ${RUNTIME_ID})…"
-            UDID=$(xcrun simctl create "$DEV" "$TYPE_ID" "$RUNTIME_ID")
-          fi
-          echo "UDID: ${UDID}"
+          echo "✅ Both simulators are ready."
+          xcrun simctl list devices | sed -n '1,200p' || true
 
-          echo "==> Booting and waiting until ready"
-          xcrun simctl boot "$UDID" || true
-          xcrun simctl bootstatus "$UDID" -b
-          xcrun simctl list devices | grep "$UDID" || true
-          echo "✅ Simulator ready."
-
-      # Appium server is started by WDIO's Appium service in your config
+      # Appium server is started by the WDIO Appium service in your config
       - name: Run WDIO (smoke on PRs; full fallback)
         run: npm run test:ios:ci
 
