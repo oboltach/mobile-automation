@@ -1,5 +1,10 @@
 xcrun simctl list devices - show list of simulators existed
 
+npm run clean
+npm run test:ios         # full
+npm run test:ios:ci      # smoke → full fallback
+npm run allure:open
+
 If you want faster test startup, you can pre-boot both simulators manually before running WDIO:
 
 xcrun simctl boot "iPhone 16 Pro"

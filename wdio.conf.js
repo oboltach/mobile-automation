@@ -1,4 +1,5 @@
 //needed because we use ESM (type:module)
+//needed because we use ESM (type:module)
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
@@ -6,30 +7,30 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // CI-friendly env defaults.
-const IOS_DEVICE   = process.env.IOS_DEVICE  || 'iPhone 16 Pro';
-const IOS_DEVICE_2 = process.env.IOS_DEVICE_2 || 'iPhone 16 Plus';
-const IOS_VERSION  = process.env.IOS_VERSION || '18.0';
-const IOS_APP      = process.env.IOS_APP     || path.resolve(
+const IOS_DEVICE    = process.env.IOS_DEVICE    || 'iPhone 16 Pro';
+const IOS_DEVICE_2  = process.env.IOS_DEVICE_2  || 'iPhone 16 Plus';
+const IOS_VERSION   = process.env.IOS_VERSION   || '18.0';
+const IOS_APP       = process.env.IOS_APP       || path.resolve(
   __dirname,
   './node_modules/ios-uicatalog/UIKitCatalog/build/Release-iphonesimulator/UIKitCatalog-iphonesimulator.app'
 );
 // UDIDs are optional on CI
-const IOS_UDID     = process.env.IOS_UDID;
-const IOS_UDID_2   = process.env.IOS_UDID_2;
+const IOS_UDID      = process.env.IOS_UDID;
+const IOS_UDID_2    = process.env.IOS_UDID_2;
 
-// Unique WDA DerivedData per worker to avoid xcodebuild collisions
-const cacheBase = process.env.XDG_CACHE_HOME || os.tmpdir();
-const WDA_DIR_1 = path.join(cacheBase, `wda-${process.pid}-8100`);
-const WDA_DIR_2 = path.join(cacheBase, `wda-${process.pid}-8101`);
+// Stable, prebuild-matching WDA DerivedData folders (NO process.pid!)
+const cacheBase     = process.env.XDG_CACHE_HOME || os.tmpdir();
+const WDA_PORT_1    = +(process.env.WDA_PORT_1 || 8100);
+const WDA_PORT_2    = +(process.env.WDA_PORT_2 || 8101);
+const WDA_DIR_1     = path.join(cacheBase, `wda-${WDA_PORT_1}`);
+const WDA_DIR_2     = path.join(cacheBase, `wda-${WDA_PORT_2}`);
 
 export const config = {
   runner: 'local',
   port: 4723,
 
   specs: ['./test/specs/**/*.js'],
-  suites: {
-    smoke: ['./test/specs/**/*smoke*.{js,ts}']
-  },
+  suites: { smoke: ['./test/specs/**/*smoke*.{js,ts}'] },
 
   maxInstances: +(process.env.MAX_INSTANCES || 2),
 
@@ -43,7 +44,7 @@ export const config = {
       'appium:app': IOS_APP,
       ...(IOS_UDID ? { 'appium:udid': IOS_UDID } : {}),
       'appium:newCommandTimeout': 240,
-      'appium:autoAcceptAlerts': true,
+      'appium:autoAcceptAlerts': false,
 
       // CI stabilizers
       'appium:wdaLaunchTimeout': 180000,
@@ -51,11 +52,14 @@ export const config = {
       'appium:simulatorStartupTimeout': 120000,
       'appium:iosInstallPause': 8000,
       'appium:isHeadless': true,
-      'appium:noReset': true,                 // don’t wipe/reinstall every test
-      'appium:derivedDataPath': WDA_DIR_1,    // isolate xcodebuild output
+      'appium:noReset': true,
+
+      // PREBUILT WDA: make Appium reuse the prebuilt artifacts
+      'appium:usePrebuiltWDA': true,
+      'appium:derivedDataPath': WDA_DIR_1,
 
       // dedicated ports per worker
-      'appium:wdaLocalPort': +(process.env.WDA_PORT_1 || 8100),
+      'appium:wdaLocalPort': WDA_PORT_1,
       'appium:webkitDebugProxyPort': +(process.env.WK_PROXY_PORT_1 || 27753),
     },
     {
@@ -67,7 +71,7 @@ export const config = {
       'appium:app': IOS_APP,
       ...(IOS_UDID_2 ? { 'appium:udid': IOS_UDID_2 } : {}),
       'appium:newCommandTimeout': 240,
-      'appium:autoAcceptAlerts': true,
+      'appium:autoAcceptAlerts': false,
 
       // CI stabilizers
       'appium:wdaLaunchTimeout': 180000,
@@ -76,16 +80,19 @@ export const config = {
       'appium:iosInstallPause': 8000,
       'appium:isHeadless': true,
       'appium:noReset': true,
+
+      // PREBUILT WDA
+      'appium:usePrebuiltWDA': true,
       'appium:derivedDataPath': WDA_DIR_2,
 
-      'appium:wdaLocalPort': +(process.env.WDA_PORT_2 || 8101),
+      'appium:wdaLocalPort': WDA_PORT_2,
       'appium:webkitDebugProxyPort': +(process.env.WK_PROXY_PORT_2 || 27754),
     }
   ],
 
   logLevel: 'info',
   waitforTimeout: 10000,
-  connectionRetryTimeout: 180000, // give session creation more time on CI
+  connectionRetryTimeout: 180000,
   connectionRetryCount: 3,
 
   services: [[
@@ -109,10 +116,8 @@ export const config = {
     }]
   ],
 
-  mochaOpts: {
-    ui: 'bdd',
-    timeout: 120000
-  },
+  mochaOpts: { ui: 'bdd', timeout: 120000 }
+},
     //
     // =====
     // Hooks
