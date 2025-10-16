@@ -24,9 +24,12 @@ env:
 jobs:
   ios-tests:
     name: iOS • WDIO + Appium + Allure (Self-Hosted)
-    # Make sure these match your self-hosted runner labels
-    runs-on: [self-hosted, macOS, Xcode16, iOS18]
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 60
+    env:
+      TMPDIR: ${{ runner.temp }}
+      XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+      npm_config_cache: ${{ github.workspace }}/.npm
 
     steps:
       - name: Checkout
@@ -160,6 +163,15 @@ jobs:
             printf 'IOS_UDID=%s\n' "$UDID1"
             printf 'IOS_UDID_2=%s\n' "$UDID2"
           } >> "$GITHUB_ENV"
+
+      - name: Prepare writable temp/cache dirs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR" "$XDG_CACHE_HOME" "$npm_config_cache"
+          chmod -R 777 "$TMPDIR" "$XDG_CACHE_HOME" "$npm_config_cache"
+          echo "Using TMPDIR=$TMPDIR"
+          echo "Using XDG_CACHE_HOME=$XDG_CACHE_HOME"
 
       ##############################################
       # 🧪 RUN WDIO TESTS (parallel caps)
