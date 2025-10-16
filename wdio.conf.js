@@ -57,7 +57,7 @@ export const config = {
       // CI stabilizers
       'appium:wdaLaunchTimeout': 180000,
       'appium:wdaConnectionTimeout': 180000,
-      'appium:xcodebuildTimeout': 180000,
+      'appium:xcodebuildTimeout': 300000,
       'appium:simulatorStartupTimeout': 120000,
       'appium:iosInstallPause': 8000,
       'appium:isHeadless': false,   // sims are already booted; keep visible for WDA reliability
@@ -88,7 +88,7 @@ export const config = {
       // CI stabilizers
       'appium:wdaLaunchTimeout': 180000,
       'appium:wdaConnectionTimeout': 180000,
-      'appium:xcodebuildTimeout': 180000,
+      'appium:xcodebuildTimeout': 300000,
       'appium:simulatorStartupTimeout': 120000,
       'appium:iosInstallPause': 8000,
       'appium:isHeadless': false,

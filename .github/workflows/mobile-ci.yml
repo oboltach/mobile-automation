@@ -13,7 +13,7 @@ concurrency:
 env:
   IOS_DEVICE: "iPhone 16 Pro"
   IOS_DEVICE_2: "iPhone 16 Plus"
-  IOS_VERSION: "18"
+  IOS_VERSION: "18"                          # we'll use "${IOS_VERSION}.0"
   NODE_OPTIONS: "--max-old-space-size=4096"
   MAX_INSTANCES: "2"
   WDA_PORT_1: "8100"
@@ -47,6 +47,7 @@ jobs:
           set -euo pipefail
           sudo xcode-select -s "/Applications/Xcode.app/Contents/Developer"
           xcodebuild -version
+          sudo xcodebuild -license accept
           echo "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer" >> "$GITHUB_ENV"
 
       - name: Setup Node.js 20
@@ -55,78 +56,77 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: Install NPM dependencies (incl. Appium 3 locally)
+        run: |
+          npm ci --ignore-scripts
+          # ensure appium 3 is present locally (if not already in package.json)
+          npm i -D appium@^3
 
-      # Build UIKitCatalog for iOS 18 Simulator and export absolute IOS_APP path
-      - name: Build UIKitCatalog (iOS Simulator, Correct Arch)
+      - name: Install/Update Appium iOS driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx appium driver install xcuitest || npx appium driver update xcuitest
+          npx appium -v
+          npx appium driver list --installed
+
+      - name: Build UIKitCatalog (iOS Simulator)
         shell: bash
         run: |
           set -euo pipefail
           PROJ="node_modules/ios-uicatalog/UIKitCatalog/UIKitCatalog.xcodeproj"
           SCHEME="UIKitCatalog"
           DERIVED="$PWD/build-uicatalog"
+          DEST_OS="${IOS_VERSION}.0"
 
-          # Build for a concrete iOS 18 simulator so we get a proper .app
           xcodebuild \
             -project "$PROJ" \
             -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.0' \
+            -destination "platform=iOS Simulator,name=${IOS_DEVICE},OS=${DEST_OS}" \
             -derivedDataPath "$DERIVED" \
             build
 
           PRODUCTS="$DERIVED/Build/Products/Release-iphonesimulator"
-          # Find the built .app (supports both UIKitCatalog.app and UIKitCatalog-iphonesimulator.app)
           APP_PATH="$(find "$PRODUCTS" -maxdepth 1 -type d -name 'UIKitCatalog*.app' | head -n1 || true)"
-
           if [[ -z "${APP_PATH:-}" || ! -d "$APP_PATH" ]]; then
             echo "❌ Could not locate built app under: $PRODUCTS"
-            echo "Contents:"
             ls -la "$PRODUCTS" || true
             exit 1
           fi
-
-          echo "✅ Found app: $APP_PATH"
+          echo "✅ Built app: $APP_PATH"
           echo "IOS_APP=$APP_PATH" >> "$GITHUB_ENV"
 
-      ##############################################
-      # 🚀 BOOT TWO SIMULATORS (no env writes here)
-      ##############################################
-      - name: Boot Simulators (safe)
-        id: boot
+      # Create and boot two clean iOS 18 simulators, export UDIDs
+      - name: Create & Boot Simulators
+        id: sims
         shell: bash
         run: |
           set -euo pipefail
-
-          # Find iOS 18 runtime visible on this Mac
-          RUNTIME_ID="$(xcrun simctl list runtimes | awk '/iOS 18/ && $0 !~ /unavailable/ {gsub(/[()]/,""); print $NF}' | head -n1)"
+          RUNTIME_ID="$(xcrun simctl list runtimes | awk '/iOS '"$IOS_VERSION"'/ && $0 !~ /unavailable/ {gsub(/[()]/,""); print $NF}' | head -n1)"
           if [[ -z "$RUNTIME_ID" ]]; then
-            echo "❌ No iOS 18 runtime visible"; exit 1
+            echo "❌ No iOS $IOS_VERSION runtime visible"; xcrun simctl list runtimes; exit 1
           fi
 
-          # Resolve device types
+          # Resolve device type identifiers
           resolve_type() { xcrun simctl list devicetypes | grep -m1 -F "$1" | sed -n 's/.*(\(com.apple[^)]*\)).*/\1/p'; }
           TYPE1="$(resolve_type "$IOS_DEVICE")"
           TYPE2="$(resolve_type "$IOS_DEVICE_2")"
           if [[ -z "$TYPE1" || -z "$TYPE2" ]]; then
-            echo "❌ Could not resolve device types"; exit 1
+            echo "❌ Could not resolve device types for '$IOS_DEVICE' or '$IOS_DEVICE_2'"; xcrun simctl list devicetypes; exit 1
           fi
 
-          # Unique names per run to avoid collisions
           NAME1="CI-DEVICE-1-${GITHUB_RUN_ID}"
           NAME2="CI-DEVICE-2-${GITHUB_RUN_ID}"
 
-          # Clean previous matching simulators (best effort)
-          xcrun simctl delete unavailable || true
+          # Best-effort cleanup of previous devices with the same names
           for n in "$NAME1" "$NAME2"; do
-            xcrun simctl list devices | awk -v p="$n" -F '[()]' '$0 ~ p {print $2}' | while read -r d; do
-              [[ -n "$d" ]] && xcrun simctl delete "$d" || true
-            done
+            xcrun simctl list devices | awk -v p="$n" -F '[()]' '$0 ~ p {print $2}' | xargs -I{} xcrun simctl delete {} || true
           done
+          xcrun simctl delete unavailable || true
 
-          # Create ONLY (capture clean UDID)
+          # Create devices and capture UDIDs
           create_only() {
             local name="$1" type="$2"
             local out udid
@@ -137,38 +137,17 @@ jobs:
             fi
             printf '%s\n' "$udid"
           }
-
           UDID1="$(create_only "$NAME1" "$TYPE1")"
           UDID2="$(create_only "$NAME2" "$TYPE2")"
 
-          # Boot silently to prevent any logs polluting later steps
+          # Boot and wait
           xcrun simctl boot "$UDID1" >/dev/null 2>&1 || true
           xcrun simctl boot "$UDID2" >/dev/null 2>&1 || true
           xcrun simctl bootstatus "$UDID1" -b >/dev/null 2>&1
           xcrun simctl bootstatus "$UDID2" -b >/dev/null 2>&1
 
-          # Store clean UDIDs in separate files (single line each)
-          printf '%s\n' "$UDID1" > udid1.txt
-          printf '%s\n' "$UDID2" > udid2.txt
-
-      ##############################################
-      # 🔐 EXPORT UDIDs SAFELY TO ENV (CLEAN)
-      ##############################################
-      - name: Export UDIDs to ENV (clean)
-        shell: bash
-        run: |
-          set -euo pipefail
-          read -r UDID1 < udid1.txt
-          read -r UDID2 < udid2.txt
-
-          # Validate UUID format before exporting
-          echo "$UDID1" | grep -Eq '^[0-9A-F-]{36}$' || { echo "❌ UDID1 invalid: $UDID1"; exit 1; }
-          echo "$UDID2" | grep -Eq '^[0-9A-F-]{36}$' || { echo "❌ UDID2 invalid: $UDID2"; exit 1; }
-
-          {
-            printf 'IOS_UDID=%s\n' "$UDID1"
-            printf 'IOS_UDID_2=%s\n' "$UDID2"
-          } >> "$GITHUB_ENV"
+          echo "IOS_UDID=$UDID1" >> "$GITHUB_ENV"
+          echo "IOS_UDID_2=$UDID2" >> "$GITHUB_ENV"
 
       - name: Prepare writable temp/cache dirs
         shell: bash
@@ -179,43 +158,48 @@ jobs:
           echo "Using TMPDIR=$TMPDIR"
           echo "Using XDG_CACHE_HOME=$XDG_CACHE_HOME"
 
-      - name: Prebuild WebDriverAgent for CI
+      - name: Prebuild WebDriverAgent for each simulator
         shell: bash
         run: |
           set -euo pipefail
-
           export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
-          WDA_SRC="$DEVELOPER_DIR/Platforms/iPhoneSimulator.platform/Developer/Library/Xcode/Agents/WebDriverAgent"
+
+          # WDA from the Appium XCUITest driver store (Appium 3 layout)
+          WDA_PROJECT="${APPIUM_HOME:-$HOME/.appium}/xcuitest-driver/WebDriverAgent/WebDriverAgent.xcodeproj"
+
+          if [[ ! -f "$WDA_PROJECT" ]]; then
+            echo "❌ WDA project not found at $WDA_PROJECT"
+            echo "Installed drivers:"; npx appium driver list --installed
+            exit 1
+          fi
+
           WDA_DERIVED_1="$XDG_CACHE_HOME/wda-${WDA_PORT_1:-8100}"
           WDA_DERIVED_2="$XDG_CACHE_HOME/wda-${WDA_PORT_2:-8101}"
-
           mkdir -p "$WDA_DERIVED_1" "$WDA_DERIVED_2"
 
-          echo "🔨 Building WDA for device 1 ($IOS_UDID)..."
+          echo "🔨 Building WDA for device 1 ($IOS_UDID) → $WDA_DERIVED_1"
           xcodebuild \
-            -project "$WDA_SRC/WebDriverAgent.xcodeproj" \
+            -project "$WDA_PROJECT" \
             -scheme WebDriverAgentRunner \
             -destination "id=$IOS_UDID" \
+            -configuration Debug \
             -derivedDataPath "$WDA_DERIVED_1" \
-            build-for-testing | xcpretty || true
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing
 
-          echo "🔨 Building WDA for device 2 ($IOS_UDID_2)..."
+          echo "🔨 Building WDA for device 2 ($IOS_UDID_2) → $WDA_DERIVED_2"
           xcodebuild \
-            -project "$WDA_SRC/WebDriverAgent.xcodeproj" \
+            -project "$WDA_PROJECT" \
             -scheme WebDriverAgentRunner \
             -destination "id=$IOS_UDID_2" \
+            -configuration Debug \
             -derivedDataPath "$WDA_DERIVED_2" \
-            build-for-testing | xcpretty || true
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing
 
-      ##############################################
-      # 🧪 RUN WDIO TESTS (parallel caps
-      ##############################################
       - name: Run WDIO Tests
         run: npm run test:ios:ci
 
-      ##############################################
-      # 📊 ALLURE REPORTS & ARTIFACTS
-      ##############################################
       - name: Generate Allure HTML
         if: always()
         run: npm run allure:generate
@@ -236,7 +220,7 @@ jobs:
           path: allure-report
           if-no-files-found: ignore
 
-      - name: Upload Artifacts
+      - name: Upload Logs/Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -246,17 +230,12 @@ jobs:
             artifacts
           if-no-files-found: ignore
 
-      ##############################################
-      # 🧹 DELETE SIMULATORS (AFTER RUN)
-      ##############################################
       - name: Delete CI Simulators (cleanup)
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          NAME1="CI-DEVICE-1-${GITHUB_RUN_ID}"
-          NAME2="CI-DEVICE-2-${GITHUB_RUN_ID}"
-          for n in "$NAME1" "$NAME2"; do
+          for n in "CI-DEVICE-1-${GITHUB_RUN_ID}" "CI-DEVICE-2-${GITHUB_RUN_ID}"; do
             xcrun simctl list devices | awk -v p="$n" -F '[()]' '$0 ~ p {print $2}' | while read -r d; do
               [[ -n "$d" ]] && xcrun simctl shutdown "$d" || true
               [[ -n "$d" ]] && xcrun simctl delete "$d" || true
