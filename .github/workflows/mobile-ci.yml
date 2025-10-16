@@ -25,7 +25,7 @@ env:
 jobs:
   ios-tests:
     name: iOS • WDIO + Appium + Allure (Self-Hosted)
-    runs-on: [self-hosted, macOS, Xcode16, iOS18]   # ← match your runner labels
+    runs-on: [self-hosted, macOS, Xcode16, iOS18]
     timeout-minutes: 60
 
     steps:
@@ -49,61 +49,69 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ────────────────────────────────────────────────────────────────────────────
-      # BOOT SIMULATORS (write UDIDs to separate files; DO NOT TOUCH $GITHUB_ENV)
-      # ────────────────────────────────────────────────────────────────────────────
+      ##############################################
+      # 🚀 BOOT SIMULATORS (NO ENV WRITE HERE)
+      ##############################################
       - name: Boot Simulators (safe)
         id: boot
         shell: bash
         run: |
           set -euo pipefail
 
-          # Pick iOS 18 runtime (visible on your machine)
+          # Find iOS 18 runtime
           RUNTIME_ID="$(xcrun simctl list runtimes | awk '/iOS 18/ && $0 !~ /unavailable/ {gsub(/[()]/,""); print $NF}' | head -n1)"
           if [[ -z "$RUNTIME_ID" ]]; then
             echo "❌ No iOS 18 runtime visible"; exit 1
           fi
 
-          # Resolve device type identifiers
-          resolve() { xcrun simctl list devicetypes | grep -m1 -F "$1" | sed -n 's/.*(\(com.apple[^)]*\)).*/\1/p'; }
-          TYPE1="$(resolve "$IOS_DEVICE")"
-          TYPE2="$(resolve "$IOS_DEVICE_2")"
+          # Resolve device types
+          resolve_type() { xcrun simctl list devicetypes | grep -m1 -F "$1" | sed -n 's/.*(\(com.apple[^)]*\)).*/\1/p'; }
+          TYPE1="$(resolve_type "$IOS_DEVICE")"
+          TYPE2="$(resolve_type "$IOS_DEVICE_2")"
           if [[ -z "$TYPE1" || -z "$TYPE2" ]]; then
             echo "❌ Could not resolve device types"; exit 1
           fi
 
-          # Best-effort cleanup (stale CI sims)
+          # Unique names per run
+          NAME1="CI-DEVICE-1-${GITHUB_RUN_ID}"
+          NAME2="CI-DEVICE-2-${GITHUB_RUN_ID}"
+
+          # Clean previous matching simulators
           xcrun simctl delete unavailable || true
-          for n in CI-DEVICE-1 CI-DEVICE-2; do
+          for n in "$NAME1" "$NAME2"; do
             xcrun simctl list devices | awk -v p="$n" -F '[()]' '$0 ~ p {print $2}' | while read -r d; do
               [[ -n "$d" ]] && xcrun simctl delete "$d" || true
             done
           done
 
-          # Create & boot; print only the UDID
-          create_boot() {
+          # Create ONLY (capture clean UDID)
+          create_only() {
             local name="$1" type="$2"
             local out udid
             out="$(xcrun simctl create "$name" "$type" "$RUNTIME_ID" 2>&1 || true)"
             udid="$(echo "$out" | grep -Eo '[0-9A-F-]{36}' | head -n1 || true)"
             if [[ -z "$udid" ]]; then
-              echo "❌ Failed to create simulator for $name"; echo "$out"; exit 1
+              echo "❌ Failed to create simulator $name"; echo "$out"; exit 1
             fi
-            xcrun simctl boot "$udid" || true
-            xcrun simctl bootstatus "$udid" -b
             printf '%s\n' "$udid"
           }
 
-          UDID1="$(create_boot "CI-DEVICE-1-$GITHUB_RUN_ID" "$TYPE1")"
-          UDID2="$(create_boot "CI-DEVICE-2-$GITHUB_RUN_ID" "$TYPE2")"
+          UDID1="$(create_only "$NAME1" "$TYPE1")"
+          UDID2="$(create_only "$NAME2" "$TYPE2")"
 
-          # WRITE ONLY RAW UDIDs TO SEPARATE FILES (NO LABELS/LOGS/PARENS)
+          # Boot silently to avoid BackBoard/Monitoring logs
+          xcrun simctl boot "$UDID1" >/dev/null 2>&1 || true
+          xcrun simctl boot "$UDID2" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$UDID1" -b >/dev/null 2>&1
+          xcrun simctl bootstatus "$UDID2" -b >/dev/null 2>&1
+
+          # Store clean UDIDs in separate files
           printf '%s\n' "$UDID1" > udid1.txt
           printf '%s\n' "$UDID2" > udid2.txt
 
-      # ────────────────────────────────────────────────────────────────────────────
-      # EXPORT TO ENV (separate step; append clean KEY=VALUE lines only)
-      # ────────────────────────────────────────────────────────────────────────────
+      ##############################################
+      # 🔐 EXPORT UDIDs SAFELY TO ENV (CLEAN)
+      ##############################################
       - name: Export UDIDs to ENV (clean)
         shell: bash
         run: |
@@ -111,7 +119,6 @@ jobs:
           read -r UDID1 < udid1.txt
           read -r UDID2 < udid2.txt
 
-          # Validate UUID format
           echo "$UDID1" | grep -Eq '^[0-9A-F-]{36}$' || { echo "❌ UDID1 invalid: $UDID1"; exit 1; }
           echo "$UDID2" | grep -Eq '^[0-9A-F-]{36}$' || { echo "❌ UDID2 invalid: $UDID2"; exit 1; }
 
@@ -120,6 +127,9 @@ jobs:
             printf 'IOS_UDID_2=%s\n' "$UDID2"
           } >> "$GITHUB_ENV"
 
+      ##############################################
+      # 🧪 RUN WDIO TESTS
+      ##############################################
       - name: Run WDIO Tests
         run: npm run test:ios:ci
 
@@ -133,6 +143,7 @@ jobs:
         with:
           name: allure-results-${{ github.run_id }}
           path: allure-results
+          if-no-files-found: ignore
 
       - name: Upload Allure Report
         if: always()
@@ -140,6 +151,7 @@ jobs:
         with:
           name: allure-report-${{ github.run_id }}
           path: allure-report
+          if-no-files-found: ignore
 
       - name: Upload Artifacts
         if: always()
@@ -149,3 +161,22 @@ jobs:
           path: |
             logs
             artifacts
+          if-no-files-found: ignore
+
+      ##############################################
+      # 🧹 DELETE SIMULATORS (AFTER RUN)
+      ##############################################
+      - name: Delete CI Simulators (cleanup)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME1="CI-DEVICE-1-${GITHUB_RUN_ID}"
+          NAME2="CI-DEVICE-2-${GITHUB_RUN_ID}"
+          for n in "$NAME1" "$NAME2"; do
+            xcrun simctl list devices | awk -v p="$n" -F '[()]' '$0 ~ p {print $2}' | while read -r d; do
+              [[ -n "$d" ]] && xcrun simctl shutdown "$d" || true
+              [[ -n "$d" ]] && xcrun simctl delete "$d" || true
+            done
+          done
+          xcrun simctl delete unavailable || true
