@@ -32,14 +32,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode (Fixed Path)
+      - name: Select Xcode
         shell: bash
         run: |
           set -euo pipefail
-          DEV_DIR="/Applications/Xcode.app/Contents/Developer"
-          sudo xcode-select -s "$DEV_DIR"
+          sudo xcode-select -s "/Applications/Xcode.app/Contents/Developer"
           xcodebuild -version
-          echo "DEVELOPER_DIR=$DEV_DIR" >> "$GITHUB_ENV"
+          echo "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer" >> "$GITHUB_ENV"
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -50,50 +49,47 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Boot Simulators (Two Devices)
+      - name: Boot Simulators (NO ENV WRITE HERE)
+        id: boot
         shell: bash
         run: |
           set -euo pipefail
 
-          # Re-Select Xcode for this shell
-          DEV_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}"
-          sudo xcode-select -s "$DEV_DIR"
-
-          # Detect iOS runtime (iOS-18-x)
-          runtime=$(xcrun simctl list runtimes | awk '/iOS 18/ && $0 !~ /unavailable/ {gsub(/[()]/,""); print $NF}' | head -n1)
-          if [[ -z "$runtime" ]]; then
-            echo "❌ No iOS 18 runtime found"
+          # Detect iOS Runtime
+          RUNTIME_ID=$(xcrun simctl list runtimes | awk '/iOS 18/ && $0 !~ /unavailable/ {gsub(/[()]/,""); print $NF}' | head -n1)
+          if [[ -z "$RUNTIME_ID" ]]; then
+            echo "❌ No iOS 18 runtime"
             exit 1
           fi
 
           # Resolve Device Types
           resolve() { xcrun simctl list devicetypes | grep -m1 -F "$1" | sed -n 's/.*(\(com.apple.*\)).*/\1/p'; }
-          type1=$(resolve "$IOS_DEVICE")
-          type2=$(resolve "$IOS_DEVICE_2")
-          if [[ -z "$type1" || -z "$type2" ]]; then
-            echo "❌ Missing device types"
-            exit 1
-          fi
+          TYPE1=$(resolve "$IOS_DEVICE")
+          TYPE2=$(resolve "$IOS_DEVICE_2")
 
-          # Create & Boot Function
+          # Create and Boot
           create_boot() {
-            name="$1"
-            type="$2"
-            udid=$(xcrun simctl create "$name" "$type" "$runtime" 2>/dev/null | grep -Eo '[0-9A-F-]{36}' || true)
+            out=$(xcrun simctl create "$1" "$2" "$RUNTIME_ID" 2>&1 || true)
+            udid=$(echo "$out" | grep -Eo '[0-9A-F-]{36}' | head -n1)
             xcrun simctl boot "$udid" || true
             xcrun simctl bootstatus "$udid" -b
             echo "$udid"
           }
 
-          # Boot Devices
-          UDID1=$(create_boot "CI-Device-1-$GITHUB_RUN_ID" "$type1")
-          UDID2=$(create_boot "CI-Device-2-$GITHUB_RUN_ID" "$type2")
+          UDID1=$(create_boot "CI-DEVICE-1" "$TYPE1")
+          UDID2=$(create_boot "CI-DEVICE-2" "$TYPE2")
 
-          # Export Environment (Clean Format)
-          {
-            echo "IOS_UDID=$UDID1"
-            echo "IOS_UDID_2=$UDID2"
-          } >> "$GITHUB_ENV"
+          # Store in temp file, NOT in ENV
+          echo "UDID1=$UDID1" > udids.txt
+          echo "UDID2=$UDID2" >> udids.txt
+
+      - name: Export UDIDs to ENV (SAFE STEP)
+        shell: bash
+        run: |
+          set -euo pipefail
+          source udids.txt
+          echo "IOS_UDID=$UDID1" >> "$GITHUB_ENV"
+          echo "IOS_UDID_2=$UDID2" >> "$GITHUB_ENV"
 
       - name: Run WDIO Tests
         run: npm run test:ios:ci
@@ -116,7 +112,7 @@ jobs:
           name: allure-report-${{ github.run_id }}
           path: allure-report
 
-      - name: Upload Test Artifacts
+      - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
