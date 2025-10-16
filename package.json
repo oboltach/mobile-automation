@@ -7,6 +7,8 @@
     "wdio": "wdio",
     "test": "wdio wdio.conf.js",
     "test:ios": "wdio wdio.conf.js",
+    "test:ios:smoke": "wdio wdio.conf.js --suite smoke",
+    "test:ios:all": "wdio wdio.conf.js",
     "test:ios:ci": "npm run test:ios:smoke || npm run test:ios:all",
     "allure:generate": "allure generate --clean ./allure-results -o ./allure-report",
     "allure:open": "allure open ./allure-report",

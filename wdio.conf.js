@@ -61,7 +61,7 @@ export const config = {
 
     //smoke suite for CI (used by: --suite smoke)
     suites: {
-      smoke: ['./test/specs/**/smoke.*.js'] // adjust to your naming
+      smoke: ['./test/specs/**/*smoke*.{js,ts}'] // adjust to your naming
     },
     maxInstances: +(process.env.MAX_INSTANCES || 1),
     //
