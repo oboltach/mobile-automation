@@ -26,14 +26,20 @@ jobs:
     name: iOS • WDIO + Appium + Allure (Self-Hosted)
     runs-on: [self-hosted, macOS]
     timeout-minutes: 60
-    env:
-      TMPDIR: ${{ runner.temp }}
-      XDG_CACHE_HOME: ${{ github.workspace }}/.cache
-      npm_config_cache: ${{ github.workspace }}/.npm
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set writable temp/cache env
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$GITHUB_WORKSPACE/.cache" >> "$GITHUB_ENV"
+          echo "npm_config_cache=$GITHUB_WORKSPACE/.npm" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP" "$GITHUB_WORKSPACE/.cache" "$GITHUB_WORKSPACE/.npm"
+          chmod -R 777 "$RUNNER_TEMP" "$GITHUB_WORKSPACE/.cache" "$GITHUB_WORKSPACE/.npm"
 
       - name: Select Xcode (/Applications/Xcode.app)
         shell: bash
