@@ -1,0 +1,74 @@
+WebdriverIO + Mocha is the best choice for a solid Appium setup. We’ll build a real automation framework with:
+
+✅ WebdriverIO (test runner & driver)
+
+✅ Mocha (test engine)
+
+✅ Appium service (mobile support)
+
+✅ Allure Reporter (reports)
+
+✅ Page Object structure
+
+🔧 Step 1: Initialize package.json
+
+(If not done yet)
+
+npm init -y
+
+📦 Step 2: Install Core Dependencies
+
+Run this in your project directory:
+
+npm install --save-dev \
+    @wdio/cli \
+    @wdio/local-runner \
+    @wdio/mocha-framework \
+    @wdio/allure-reporter \
+    @wdio/appium-service \
+    appium
+
+🚗 Step 3: Install Appium Drivers
+
+iOS & Android drivers must be installed inside Appium, not npm:
+
+npx appium driver install xcuitest
+npx appium driver install uiautomator2
+
+⚙️ Step 4: Run WDIO Configuration Wizard
+
+This will create wdio.conf.js
+
+npx wdio config
+
+
+🧭 In Wizard — choose:
+
+Question	Select
+Test runner	local
+Framework	mocha
+Spec files location	./tests/**/*.spec.js
+Reporter	allure
+Plugins	Appium Service (@wdio/appium-service)
+Base URL	leave blank ("")
+Generate page objects?	Yes (optional)
+Install dependencies	No (we already did)
+📁 After Setup — Folder Structure
+mobile-automation/
+ ├─ wdio.conf.js
+ ├─ package.json
+ ├─ /tests
+ ├─ /pages
+ ├─ /reports (after running)
+
+🟢 Next Step – First Mobile Test
+
+Once WDIO is configured, I’ll create:
+
+✅ iOS test example
+
+✅ Android test example
+
+✅ App capability setup in wdio.conf.js
+
+✅ Page Object template

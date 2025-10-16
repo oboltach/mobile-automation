@@ -1,0 +1,15 @@
+xcrun simctl list devices - show list of simulators existed
+
+If you want faster test startup, you can pre-boot both simulators manually before running WDIO:
+
+xcrun simctl boot "iPhone 16 Pro"
+xcrun simctl boot "iPhone 16 Plus"
+
+
+Then open them in separate windows:
+
+open -na Simulator --args -CurrentDeviceUDID <UDID_of_16_Pro>
+open -na Simulator --args -CurrentDeviceUDID <UDID_of_16_Plus>
+
+
+(I can show you how to get each UDID if needed.)

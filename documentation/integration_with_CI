@@ -1,0 +1,8 @@
+When wiring your framework to CI, make two focused updates: in package.json, add a stable CI entry
+("test:ios:ci": "wdio wdio.conf.js --suite smoke || wdio wdio.conf.js"), keep Allure scripts (allure:generate, allure:open),
+optionally add a cleanup helper (clean:allure) and pin Node via "engines": { "node": ">=20 <=22" };
+in wdio.conf.js, expose CI-friendly env vars for caps (e.g., IOS_DEVICE, IOS_VERSION, IOS_APP, optional IOS_UDID),
+define a suites.smoke block to match the CI command, ensure Allure reporter writes to allure-results/,
+bump timeouts for CI (e.g., Mocha timeout: 120000), avoid hardcoded UDIDs/devices, use the Appium service
+(or, if you start Appium manually in CI, set hostname/port/path accordingly), and if you run multiple sims,
+give each cap unique WDA/WebKit ports; since you’re on ESM, export with export const config = { … } rather than module.exports/exports.

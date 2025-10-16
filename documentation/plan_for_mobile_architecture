@@ -1,0 +1,87 @@
+Recommended order (impact → effort)
+
+CI/CD first (GitHub Actions or Jenkins) + rock-solid artifacts & reporting
+Make your suite runnable on every PR and visible to everyone. This multiplies the value of your current work and forces discipline around flakiness.
+
+Do now
+
+Add a CI job that runs headless simulators with a small smoke tag on PRs, full suite nightly.
+
+Publish Allure results, attach videos/logs/screenshots as artifacts.
+
+Enforce status checks (fail the PR when smoke breaks).
+
+Add a flaky-test quarantine label and report (Allure categories).
+
+Acceptance criteria
+
+npm run test:smoke green on PRs; artifacts visible from CI UI.
+
+One-click link from PR → Allure trend.
+
+Median run time under 10–12 minutes for PR smoke.
+
+Android parity (hybrid platform)
+Once CI is humming, add Android so you can catch platform drift early.
+
+Do now
+
+Create shared “screen” objects with platform selectors (iOS/Android locators side-by-side).
+
+Stand up 1–2 AVDs (e.g., Pixel 7/Android 14 & 15) and wire into the CI matrix.
+
+Acceptance criteria
+
+Same tests run with --platform=ios|android via config matrix.
+
+Platform-specific capabilities + selectors live in one place.
+
+Stability & speed hardening
+
+Replace sleeps with explicit waits; add network idling helpers.
+
+Introduce test IDs with devs; avoid brittle XPath/UI text.
+
+Implement retry on known infra flakes (not on assertion failures).
+
+Parallelize smartly (cap at the # of cores; shard by spec).
+
+Device farm integration (as you scale): BrowserStack/App Center/Bitrise/Firebase Test Lab
+
+Run smoke on local sims; run broader matrix on real devices nightly.
+
+Keep artifacts unified in the same Allure report.
+
+Real-world features
+
+Push notifications, deep links, permissions, background/foreground, geo/sensor mocks, network throttling, locale/timezone matrix.
+
+Add network interception for backend dependency isolation.
+
+Non-functional coverage
+
+Performance smoke (cold start, time-to-first-screen, key flows p95).
+
+Accessibility checks (labels, focus order).
+
+Security basics (no secrets in logs, ATS/network policies).
+
+A quick, concrete next sprint (you could finish this week)
+
+CI: Add GitHub Actions workflow with a matrix for Node + platform; cache ~/.npm and Gradle/CocoaPods; upload Allure, screenshots, and videos as artifacts; comment PR with a link to the report.
+
+Suite hygiene: Add @smoke tag and make it <10 min. Add a flaky category in Allure.
+
+Config: One wdio.shared.conf.ts + wdio.ios.conf.ts / wdio.android.conf.ts.
+
+Docs: A README.md “How to run locally vs CI” + troubleshooting.
+
+If you want a starter outline, here’s a minimal plan you can drop in:
+
+Jobs: lint → build → test:smoke (PR) | test:full (nightly)
+
+Artifacts: allure-results/, videos/, logs/, screenshots/
+
+Env: NODE_ENV=test, platform caps from matrix
+
+Gates: Require test:smoke to merge

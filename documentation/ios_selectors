@@ -1,0 +1,196 @@
+🏁 Best Practice — Selectors Priority
+
+Priority	                  Use	                              Why
+
+🥇 1. Accessibility ID (~)	~Alert Views	                    Fast, stable, cross-platform
+🥈 2. Predicate	            name == "Alert Views"	            Flexible search logic
+🥉 3. Class Chain	          XCUIElementTypeStaticText[...]	  Deep structure navigation
+🛑 Last: XPath	            Slow & fragile	                  Avoid unless no other option
+
+___________________________________________________________________
+
+Accessibility ID
+
+To use the class chain selector from Appium Inspector:
+
+   Alert Views
+
+You simply wrap it inside WebdriverIO’s mobile selector syntax:
+
+   $('~Alert Views')
+
+Final Page Object Format (Correct Syntax)
+
+get alertViews() {
+  return $('~Alert Views');
+}
+
+🔍 Important Notes About Accessibility ID
+Rule	                      Explanation
+Uses ~ in WDIO	            ~ is shorthand for accessibility id
+Fastest & most stable	      Direct lookup via native API
+Cross-platform	            Works on iOS & Android
+Must be set by developer	  Maps to accessibilityIdentifier (iOS) or content-desc (Android)
+Preferred over XPath	      More reliable and readable
+
+_____________________________________________________________________
+
+Chain class
+
+To use the class chain selector from Appium Inspector:
+
+   **/XCUIElementTypeStaticText[`name == "Alert Views"`]
+
+You simply wrap it inside WebdriverIO’s mobile selector syntax:
+
+   $('**/XCUIElementTypeStaticText[`name == "Alert Views"`]')
+
+Final Page Object Format (Correct Syntax)
+get alertViews() {
+  return $('**/XCUIElementTypeStaticText[`name == "Alert Views"`]');
+}
+
+🔍 Important Notes About Class Chain
+
+Rule               	    Explanation
+
+Must start with **/	    Means "search anywhere in hierarchy"
+Must use backticks `	  Encloses the condition
+Must be wrapped in $()	WDIO selector wrapper
+Works only on iOS	      For Android, UIAutomator2 selectors differ
+__________________________________________________________________________
+Predicate
+
+
+To use the class chain selector from Appium Inspector:
+name == "Alert Views"
+
+You simply wrap it inside WebdriverIO’s mobile selector syntax:
+
+Use ios predicate string: prefix + wrap in $():
+
+$('ios predicate string:name == "Alert Views"')
+
+🧩 Final Page Object Format (Correct Syntax)
+get alertViews() {
+  return $('ios predicate string:name == "Alert Views"');
+}
+
+📌 Important Notes About Predicate Selectors
+Rule	Explanation
+Must start with ios predicate string:	Tells Appium to use NSPredicate search
+Can use name, label, value	These map to iOS element attributes
+Use logical operations (==, CONTAINS, BEGINSWITH)	Very powerful for dynamic UI
+Wrapped in $()	Required for WebdriverIO
+iOS only	Doesn't work on Android
+
+🧪 Example Variations
+Goal	Predicate
+Exact match	name == "Alert Views"
+Contains (case-insensitive)	name CONTAINS[c] "Alert"
+Starts with	name BEGINSWITH "Alert"
+Multiple conditions	type == "XCUIElementTypeButton" AND name == "Login"
+
+🔁 Class Chain vs Predicate — When to Use
+Use Case	Choose
+Exact ID/label exists	Accessibility ID (~)
+Filter elements by attribute (flexible)	Predicate
+Navigate structure/tree	Class Chain
+Last resort	XPath
+
+__________________________________________________________________________
+
+
+Some rules:
+❓1. Why do we include type == "XCUIElementTypeStaticText" in predicate?
+
+Because mobile UI elements are not HTML — there are no <div>, <button>, <span> like in web.
+Instead, iOS uses native element types such as:
+
+iOS Native Type	Meaning
+XCUIElementTypeStaticText	Text label or menu item
+XCUIElementTypeButton	Button
+XCUIElementTypeTextField	Input text field
+XCUIElementTypeCell	Table row
+XCUIElementTypeAlert	System alert box
+✅ Filtering By Type Makes Selector More Accurate
+
+Without specifying type:
+
+'ios predicate string:name CONTAINS[c] "Cancel"'
+
+
+This may match any element with “Cancel” — a button, a label, or even a hidden accessibility element.
+
+With type restriction:
+
+'ios predicate string:type == "XCUIElementTypeStaticText" AND name CONTAINS[c] "Cancel"'
+
+
+This ensures:
+✔ You only match the menu text (not a button)
+✔ Stronger, safer matching
+✔ Less risk of wrong element click
+
+❓2. Why do we write -ios predicate string: or -ios class chain:?
+
+This prefix tells Appium we’re using a native iOS locator strategy, not XPath or CSS.
+
+Locator Strategy	Prefix in WDIO	Example
+Accessibility ID	~	$('~Login')
+iOS Predicate	-ios predicate string:	$('ios predicate string:name CONTAINS "Cancel"')
+iOS Class Chain	-ios class chain:	$('**/XCUIElementTypeButton[...]')
+XPath	None	$('//XCUIElementTypeButton')
+🔍 Without -ios, Appium wouldn't know which engine to use
+
+The WebDriver protocol supports many engines. Here's what happens:
+
+Engine	Command Prefix
+iOS (XCUITest)	-ios ...
+Android (UiAutomator2)	-android ...
+XPath (Generic)	//...
+Accessibility ID	~...
+
+
+🔍 Breakdown: What Does [c] Mean?
+Modifier	Meaning
+[c]	Case-insensitive (Ignore case: "OK", "ok", "Ok")
+[d]	Diacritic-insensitive (Ignore accents: é vs e)
+[cd]	Case & diacritic-insensitive
+✅ Example: name BEGINSWITH[c] "Okay"
+Without [c]	With [c]
+name BEGINSWITH "Okay" → Only matches exact case Exactly "Okay"	name BEGINSWITH[c] "Okay" → Matches "Okay", "okay", "OKAY" etc.
+
+
+🤖 Difference Between driver and browser in WebdriverIO
+Object	Purpose	Typical Use
+browser	WebdriverIO wrapper (higher-level API)	Most WDIO commands (click, saveScreenshot, url)
+driver	Raw Appium/WebDriver session	Low-level actions (getPageSource, performance logs, mobile commands)
+✅ Why driver.getPageSource()?
+
+getPageSource() is a WebDriver/Appium command, so it belongs under driver, providing raw XML of the current app UI.
+
+const src = await driver.getPageSource();
+
+
+Gets the full XML view hierarchy (not just visible elements)
+
+Useful for deep debugging and inspecting structure
+
+✅ Why browser.saveScreenshot()?
+
+screenshot() is a WebdriverIO convenience function accessible through browser.
+
+await browser.saveScreenshot('./reports/uicatalog-alerts-fail.png');
+
+
+A WDIO utility (not native WebDriver)
+
+Offers easy file handling, path saving, hooks, etc.
+
+browser automatically includes retries, logging, hooks
+
+🧠 Summary Table
+Action	Use	Why Different Object?
+driver.getPageSource()	Get raw XML UI tree	Native WebDriver command
+browser.saveScreenshot()	Save visible screen image	WDIO high-level helper

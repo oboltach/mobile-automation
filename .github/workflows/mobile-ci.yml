@@ -1,0 +1,99 @@
+name: Mobile Automation CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Override simulator + app path here for CI
+  IOS_DEVICE: "iPhone 15"
+  IOS_VERSION: "17.5"
+  IOS_APP: "./apps/UIKitCatalog-iphonesimulator.app"
+  NODE_OPTIONS: "--max-old-space-size=4096"
+
+jobs:
+  ios-tests:
+    name: iOS • WDIO + Appium + Allure
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20 (with npm cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Show Xcode & available simulators
+        run: |
+          xcodebuild -version
+          xcrun simctl list devicetypes
+          xcrun simctl list runtimes
+          xcrun simctl list devices
+
+      - name: Boot Simulator ($IOS_DEVICE $IOS_VERSION)
+        shell: bash
+        run: |
+          set -e
+          DEV="$IOS_DEVICE"
+          # Pick matching runtime for the desired iOS version
+          RUNTIME=$(xcrun simctl list runtimes | awk -F '[()]' '/iOS/ && /Available/ {print $2}' | grep "$IOS_VERSION" | head -n1)
+          if [ -z "$RUNTIME" ]; then
+            echo "❌ Runtime $IOS_VERSION not found on this runner. See 'Show Xcode & available simulators' step above." && exit 1
+          fi
+          # Reuse an existing device if present
+          UDID=$(xcrun simctl list devices | awk -v dev="$DEV" -F '[()]' '$0 ~ dev && $0 ~ "Booted|Shutdown" {print $2; exit}')
+          if [ -z "$UDID" ]; then
+            TYPE_ID="com.apple.CoreSimulator.SimDeviceType.$(echo $DEV | tr ' ' '-')"
+            RT_ID="com.apple.CoreSimulator.SimRuntime.$(echo $RUNTIME | tr ' ' '-')"
+            echo "Creating simulator: $DEV ($RUNTIME)"
+            UDID=$(xcrun simctl create "$DEV" "$TYPE_ID" "$RT_ID")
+          fi
+          echo "Booting $UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl list devices | grep "$UDID"
+
+      # Appium server is started by WDIO's Appium service in your config
+      - name: Run WDIO (smoke on PRs; full fallback)
+        run: npm run test:ios:ci
+
+      - name: Generate Allure HTML (always)
+        if: always()
+        run: npm run allure:generate
+
+      - name: Upload Allure results (raw)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-${{ github.run_id }}
+          path: allure-results
+
+      - name: Upload Allure report (HTML)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report-${{ github.run_id }}
+          path: allure-report
+
+      - name: Upload logs & screenshots/videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ github.run_id }}
+          path: |
+            logs
+            artifacts
+          if-no-files-found: ignore

@@ -1,0 +1,12 @@
+{
+  "platformName": "iOS",
+  "appium:automationName": "XCUITest",
+  "appium:deviceName": "iPhone 16 Pro",
+  "appium:platformVersion": "18.0",
+  "appium:app": "/Users/olgaboltach/mobile-automation/node_modules/ios-uicatalog/UIKitCatalog/build/Release-iphonesimulator/UIKitCatalog-iphonesimulator.app",
+  "appium:shouldWaitForQuiescence": false,
+  "appium:wdaStartupRetries": 2,
+  "appium:wdaStartupRetryInterval": 8000,
+  "appium:newCommandTimeout": 240,
+  "appium:autoAcceptAlerts": true
+}
