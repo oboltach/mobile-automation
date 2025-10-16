@@ -174,7 +174,7 @@ jobs:
           echo "Using XDG_CACHE_HOME=$XDG_CACHE_HOME"
 
       ##############################################
-      # 🧪 RUN WDIO TESTS (parallel caps)
+      # 🧪 RUN WDIO TESTS (parallel caps
       ##############################################
       - name: Run WDIO Tests
         run: npm run test:ios:ci
