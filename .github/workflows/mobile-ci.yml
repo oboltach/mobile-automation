@@ -14,10 +14,10 @@ env:
   # Target exact names that exist on Xcode 16:
   IOS_DEVICE: "iPhone 16 Pro"
   IOS_DEVICE_2: "iPhone 16 Plus"
-  IOS_VERSION: "18.0"                      # will fall back to latest iOS if 18.0 not present
+  IOS_VERSION: "18"                       # will fall back to latest iOS if 18.x not present
   IOS_APP: "./apps/UIKitCatalog-iphonesimulator.app"
   NODE_OPTIONS: "--max-old-space-size=4096"
-  MAX_INSTANCES: "2"                       # WDIO global; run both caps concurrently
+  MAX_INSTANCES: "2"                      # WDIO global; run both caps concurrently
   # Distinct per-device ports (match your wdio.conf.js usage)
   WDA_PORT_1: "8100"
   WDA_PORT_2: "8101"
@@ -39,6 +39,34 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.1'
+
+      # IMPORTANT: make the selected Xcode active for xcrun/simctl and init components
+      - name: Verify Xcode & install components
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR"
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcodebuild -version
+          sudo xcodebuild -runFirstLaunch || true
+
+          echo "== RUNTIMES AFTER SELECTION =="
+          xcrun simctl list runtimes || true
+
+          # Fallback scan if the image has multiple Xcodes and no iOS runtimes found yet
+          if ! xcrun simctl list runtimes | grep -qi "iOS"; then
+            echo "No iOS runtimes detected via current DEVELOPER_DIR. Scanning /Applications…"
+            for X in /Applications/Xcode_*.app; do
+              echo "Trying $X"
+              sudo xcode-select -s "$X/Contents/Developer"
+              xcodebuild -version
+              sudo xcodebuild -runFirstLaunch || true
+              if xcrun simctl list runtimes | grep -qi "iOS"; then
+                echo "✅ Found iOS runtimes under $X"
+                break
+              fi
+            done
+          fi
 
       - name: Use Node.js 20 (with npm cache)
         uses: actions/setup-node@v4
