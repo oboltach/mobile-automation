@@ -49,24 +49,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Build the UIKitCatalog simulator .app and export IOS_APP (absolute path)
-      - name: Build UIKitCatalog (iOS Simulator)
+      # Build UIKitCatalog for iOS 18 Simulator and export absolute IOS_APP path
+      - name: Build UIKitCatalog (iOS Simulator, Correct Arch)
         shell: bash
         run: |
           set -euo pipefail
           PROJ="node_modules/ios-uicatalog/UIKitCatalog/UIKitCatalog.xcodeproj"
           SCHEME="UIKitCatalog"
           DERIVED="$PWD/build-uicatalog"
+
+          # Force a concrete simulator destination to produce a proper .app for iOS 18
           xcodebuild \
             -project "$PROJ" \
             -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.0' \
             -derivedDataPath "$DERIVED" \
             build
+
           APP_PATH="$DERIVED/Build/Products/Release-iphonesimulator/UIKitCatalog-iphonesimulator.app"
           if [[ ! -d "$APP_PATH" ]]; then
-            echo "❌ Build succeeded but app not found at $APP_PATH"
+            echo "❌ App not found at: $APP_PATH"
+            echo "Contents of Products:"
             ls -R "$DERIVED/Build/Products" || true
             exit 1
           fi
