@@ -164,19 +164,49 @@ jobs:
           set -euo pipefail
           export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 
-          # WDA from the Appium XCUITest driver store (Appium 3 layout)
-          WDA_PROJECT="${APPIUM_HOME:-$HOME/.appium}/xcuitest-driver/WebDriverAgent/WebDriverAgent.xcodeproj"
+          # 1) Locate the WDA project within the installed XCUITest driver
+          # Common layouts for Appium 3 driver store:
+          CANDIDATES=(
+            "${APPIUM_HOME:-$HOME/.appium}/node_modules/@appium/xcuitest-driver/WebDriverAgent/WebDriverAgent.xcodeproj"
+            "${APPIUM_HOME:-$HOME/.appium}/drivers/node_modules/@appium/xcuitest-driver/WebDriverAgent/WebDriverAgent.xcodeproj"
+            "${APPIUM_HOME:-$HOME/.appium}/packages/@appium/xcuitest-driver/WebDriverAgent/WebDriverAgent.xcodeproj"
+            "${APPIUM_HOME:-$HOME/.appium}/@appium/xcuitest-driver/WebDriverAgent/WebDriverAgent.xcodeproj"
+          )
 
-          if [[ ! -f "$WDA_PROJECT" ]]; then
-            echo "❌ WDA project not found at $WDA_PROJECT"
-            echo "Installed drivers:"; npx appium driver list --installed
+          WDA_PROJECT=""
+          for p in "${CANDIDATES[@]}"; do
+            if [[ -f "$p" ]]; then
+              WDA_PROJECT="$p"
+              break
+            fi
+          done
+
+          # 2) If not found in Appium home, install driver as a dev dep and resolve via Node
+          if [[ -z "$WDA_PROJECT" ]]; then
+            echo "ℹ️ Falling back to resolving driver path via node (adding @appium/xcuitest-driver as dev dependency)"
+            npm i -D @appium/xcuitest-driver >/dev/null 2>&1 || true
+            WDA_DIR="$(node -e "try{console.log(require.resolve('@appium/xcuitest-driver').replace(/\/index\\.js$/,''))}catch(e){process.exit(1)}" || true)"
+            if [[ -n "${WDA_DIR:-}" && -d "$WDA_DIR/WebDriverAgent" ]]; then
+              WDA_PROJECT="$WDA_DIR/WebDriverAgent/WebDriverAgent.xcodeproj"
+            fi
+          fi
+
+          if [[ -z "$WDA_PROJECT" || ! -f "$WDA_PROJECT" ]]; then
+            echo "❌ Could not locate WebDriverAgent.xcodeproj in Appium driver store or node_modules."
+            echo "Installed drivers:"; npx appium driver list --installed || true
+            echo "APPIUM_HOME=${APPIUM_HOME:-$HOME/.appium}"
+            echo "Tried:"; printf ' - %s\n' "${CANDIDATES[@]}"
             exit 1
           fi
 
+          echo "✅ Using WDA project at: $WDA_PROJECT"
+
+          # 3) DerivedData paths must match your caps (wda ports)
           WDA_DERIVED_1="$XDG_CACHE_HOME/wda-${WDA_PORT_1:-8100}"
           WDA_DERIVED_2="$XDG_CACHE_HOME/wda-${WDA_PORT_2:-8101}"
           mkdir -p "$WDA_DERIVED_1" "$WDA_DERIVED_2"
 
+          # 4) Build-for-testing per simulator UDID (no signing on sim)
           echo "🔨 Building WDA for device 1 ($IOS_UDID) → $WDA_DERIVED_1"
           xcodebuild \
             -project "$WDA_PROJECT" \

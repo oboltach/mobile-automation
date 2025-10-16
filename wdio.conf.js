@@ -9,7 +9,8 @@ const __dirname  = path.dirname(__filename);
 // CI-friendly env defaults.
 const IOS_DEVICE    = process.env.IOS_DEVICE    || 'iPhone 16 Pro';
 const IOS_DEVICE_2  = process.env.IOS_DEVICE_2  || 'iPhone 16 Plus';
-const IOS_VERSION   = process.env.IOS_VERSION   || '18.0';
+const rawVersion = process.env.IOS_VERSION || '18.0';
+const IOS_VERSION = /^\d+$/.test(rawVersion) ? `${rawVersion}.0` : rawVersion;
 const IOS_APP       = process.env.IOS_APP || path.resolve(
   __dirname,
   './node_modules/ios-uicatalog/UIKitCatalog/build/Release-iphonesimulator/UIKitCatalog-iphonesimulator.app'
