@@ -47,7 +47,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # Build UIKitCatalog for iOS 18 Simulator and export absolute IOS_APP path
       - name: Build UIKitCatalog (iOS Simulator, Correct Arch)
