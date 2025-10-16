@@ -179,6 +179,34 @@ jobs:
           echo "Using TMPDIR=$TMPDIR"
           echo "Using XDG_CACHE_HOME=$XDG_CACHE_HOME"
 
+      - name: Prebuild WebDriverAgent for CI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+          WDA_SRC="$DEVELOPER_DIR/Platforms/iPhoneSimulator.platform/Developer/Library/Xcode/Agents/WebDriverAgent"
+          WDA_DERIVED_1="$XDG_CACHE_HOME/wda-${WDA_PORT_1:-8100}"
+          WDA_DERIVED_2="$XDG_CACHE_HOME/wda-${WDA_PORT_2:-8101}"
+
+          mkdir -p "$WDA_DERIVED_1" "$WDA_DERIVED_2"
+
+          echo "🔨 Building WDA for device 1 ($IOS_UDID)..."
+          xcodebuild \
+            -project "$WDA_SRC/WebDriverAgent.xcodeproj" \
+            -scheme WebDriverAgentRunner \
+            -destination "id=$IOS_UDID" \
+            -derivedDataPath "$WDA_DERIVED_1" \
+            build-for-testing | xcpretty || true
+
+          echo "🔨 Building WDA for device 2 ($IOS_UDID_2)..."
+          xcodebuild \
+            -project "$WDA_SRC/WebDriverAgent.xcodeproj" \
+            -scheme WebDriverAgentRunner \
+            -destination "id=$IOS_UDID_2" \
+            -derivedDataPath "$WDA_DERIVED_2" \
+            build-for-testing | xcpretty || true
+
       ##############################################
       # 🧪 RUN WDIO TESTS (parallel caps
       ##############################################
