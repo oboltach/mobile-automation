@@ -25,7 +25,7 @@ env:
 jobs:
   ios-tests:
     name: iOS • WDIO + Appium + Allure (Self-Hosted)
-    runs-on: [self-hosted, macOS, Xcode16, iOS18]
+    runs-on: [self-hosted, macOS, Xcode16, iOS18]   # ← match your runner labels
     timeout-minutes: 60
 
     steps:
@@ -49,47 +49,76 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Boot Simulators (NO ENV WRITE HERE)
+      # ────────────────────────────────────────────────────────────────────────────
+      # BOOT SIMULATORS (write UDIDs to separate files; DO NOT TOUCH $GITHUB_ENV)
+      # ────────────────────────────────────────────────────────────────────────────
+      - name: Boot Simulators (safe)
         id: boot
         shell: bash
         run: |
           set -euo pipefail
 
-          # Detect iOS Runtime
-          RUNTIME_ID=$(xcrun simctl list runtimes | awk '/iOS 18/ && $0 !~ /unavailable/ {gsub(/[()]/,""); print $NF}' | head -n1)
+          # Pick iOS 18 runtime (visible on your machine)
+          RUNTIME_ID="$(xcrun simctl list runtimes | awk '/iOS 18/ && $0 !~ /unavailable/ {gsub(/[()]/,""); print $NF}' | head -n1)"
           if [[ -z "$RUNTIME_ID" ]]; then
-            echo "❌ No iOS 18 runtime"
-            exit 1
+            echo "❌ No iOS 18 runtime visible"; exit 1
           fi
 
-          # Resolve Device Types
-          resolve() { xcrun simctl list devicetypes | grep -m1 -F "$1" | sed -n 's/.*(\(com.apple.*\)).*/\1/p'; }
-          TYPE1=$(resolve "$IOS_DEVICE")
-          TYPE2=$(resolve "$IOS_DEVICE_2")
+          # Resolve device type identifiers
+          resolve() { xcrun simctl list devicetypes | grep -m1 -F "$1" | sed -n 's/.*(\(com.apple[^)]*\)).*/\1/p'; }
+          TYPE1="$(resolve "$IOS_DEVICE")"
+          TYPE2="$(resolve "$IOS_DEVICE_2")"
+          if [[ -z "$TYPE1" || -z "$TYPE2" ]]; then
+            echo "❌ Could not resolve device types"; exit 1
+          fi
 
-          # Create and Boot
+          # Best-effort cleanup (stale CI sims)
+          xcrun simctl delete unavailable || true
+          for n in CI-DEVICE-1 CI-DEVICE-2; do
+            xcrun simctl list devices | awk -v p="$n" -F '[()]' '$0 ~ p {print $2}' | while read -r d; do
+              [[ -n "$d" ]] && xcrun simctl delete "$d" || true
+            done
+          done
+
+          # Create & boot; print only the UDID
           create_boot() {
-            out=$(xcrun simctl create "$1" "$2" "$RUNTIME_ID" 2>&1 || true)
-            udid=$(echo "$out" | grep -Eo '[0-9A-F-]{36}' | head -n1)
+            local name="$1" type="$2"
+            local out udid
+            out="$(xcrun simctl create "$name" "$type" "$RUNTIME_ID" 2>&1 || true)"
+            udid="$(echo "$out" | grep -Eo '[0-9A-F-]{36}' | head -n1 || true)"
+            if [[ -z "$udid" ]]; then
+              echo "❌ Failed to create simulator for $name"; echo "$out"; exit 1
+            fi
             xcrun simctl boot "$udid" || true
             xcrun simctl bootstatus "$udid" -b
-            echo "$udid"
+            printf '%s\n' "$udid"
           }
 
-          UDID1=$(create_boot "CI-DEVICE-1" "$TYPE1")
-          UDID2=$(create_boot "CI-DEVICE-2" "$TYPE2")
+          UDID1="$(create_boot "CI-DEVICE-1-$GITHUB_RUN_ID" "$TYPE1")"
+          UDID2="$(create_boot "CI-DEVICE-2-$GITHUB_RUN_ID" "$TYPE2")"
 
-          # Store in temp file, NOT in ENV
-          echo "UDID1=$UDID1" > udids.txt
-          echo "UDID2=$UDID2" >> udids.txt
+          # WRITE ONLY RAW UDIDs TO SEPARATE FILES (NO LABELS/LOGS/PARENS)
+          printf '%s\n' "$UDID1" > udid1.txt
+          printf '%s\n' "$UDID2" > udid2.txt
 
-      - name: Export UDIDs to ENV (SAFE STEP)
+      # ────────────────────────────────────────────────────────────────────────────
+      # EXPORT TO ENV (separate step; append clean KEY=VALUE lines only)
+      # ────────────────────────────────────────────────────────────────────────────
+      - name: Export UDIDs to ENV (clean)
         shell: bash
         run: |
           set -euo pipefail
-          source udids.txt
-          echo "IOS_UDID=$UDID1" >> "$GITHUB_ENV"
-          echo "IOS_UDID_2=$UDID2" >> "$GITHUB_ENV"
+          read -r UDID1 < udid1.txt
+          read -r UDID2 < udid2.txt
+
+          # Validate UUID format
+          echo "$UDID1" | grep -Eq '^[0-9A-F-]{36}$' || { echo "❌ UDID1 invalid: $UDID1"; exit 1; }
+          echo "$UDID2" | grep -Eq '^[0-9A-F-]{36}$' || { echo "❌ UDID2 invalid: $UDID2"; exit 1; }
+
+          {
+            printf 'IOS_UDID=%s\n' "$UDID1"
+            printf 'IOS_UDID_2=%s\n' "$UDID2"
+          } >> "$GITHUB_ENV"
 
       - name: Run WDIO Tests
         run: npm run test:ios:ci
