@@ -11,21 +11,27 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Override simulator + app path here for CI
-  IOS_DEVICE: "iPhone 15"
-  IOS_VERSION: "17.5"
+  # CI defaults: target a runtime that exists on current macOS runners
+  IOS_DEVICE: "iPhone 16"
+  IOS_VERSION: "18.0"
   IOS_APP: "./apps/UIKitCatalog-iphonesimulator.app"
   NODE_OPTIONS: "--max-old-space-size=4096"
 
 jobs:
   ios-tests:
     name: iOS • WDIO + Appium + Allure
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Pin Xcode so we know which iOS runtimes are available (iOS 18.x)
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.0'   # 16.0/16.1 both have iOS 18.x runtimes on macOS-15
 
       - name: Use Node.js 20 (with npm cache)
         uses: actions/setup-node@v4
@@ -41,30 +47,50 @@ jobs:
           xcodebuild -version
           xcrun simctl list devicetypes
           xcrun simctl list runtimes
-          xcrun simctl list devices
+          xcrun simctl list devices available
 
       - name: Boot Simulator ($IOS_DEVICE $IOS_VERSION)
         shell: bash
         run: |
-          set -e
-          DEV="$IOS_DEVICE"
-          # Pick matching runtime for the desired iOS version
-          RUNTIME=$(xcrun simctl list runtimes | awk -F '[()]' '/iOS/ && /Available/ {print $2}' | grep "$IOS_VERSION" | head -n1)
-          if [ -z "$RUNTIME" ]; then
-            echo "❌ Runtime $IOS_VERSION not found on this runner. See 'Show Xcode & available simulators' step above." && exit 1
+          set -euo pipefail
+          DEV="${IOS_DEVICE}"
+
+          echo "==> Selecting runtime for iOS ${IOS_VERSION}"
+          # Try exact version first; otherwise fall back to latest iOS runtime on the image
+          RUNTIME_ID=$(xcrun simctl list runtimes | awk -v v="$IOS_VERSION" '
+            /iOS/ && /Available/ && $0 ~ v {
+              gsub(/[()]/, ""); print $NF; exit
+            }')
+          if [[ -z "${RUNTIME_ID:-}" ]]; then
+            echo "⚠️  iOS ${IOS_VERSION} not found; falling back to latest iOS runtime on runner…"
+            RUNTIME_ID=$(xcrun simctl list runtimes | awk '
+              /iOS/ && /Available/ { gsub(/[()]/, ""); print $NF }' | tail -n1)
           fi
-          # Reuse an existing device if present
-          UDID=$(xcrun simctl list devices | awk -v dev="$DEV" -F '[()]' '$0 ~ dev && $0 ~ "Booted|Shutdown" {print $2; exit}')
-          if [ -z "$UDID" ]; then
-            TYPE_ID="com.apple.CoreSimulator.SimDeviceType.$(echo $DEV | tr ' ' '-')"
-            RT_ID="com.apple.CoreSimulator.SimRuntime.$(echo $RUNTIME | tr ' ' '-')"
-            echo "Creating simulator: $DEV ($RUNTIME)"
-            UDID=$(xcrun simctl create "$DEV" "$TYPE_ID" "$RT_ID")
+          echo "Using runtime: ${RUNTIME_ID}"
+
+          echo "==> Resolving device type id for '${DEV}'"
+          TYPE_ID=$(xcrun simctl list devicetypes | awk -v n="$DEV" -F '[()]' '$0 ~ n {print $2; exit}')
+          if [[ -z "${TYPE_ID:-}" ]]; then
+            echo "❌ Device type '${DEV}' not available on this runner."
+            xcrun simctl list devicetypes
+            exit 1
           fi
-          echo "Booting $UDID"
+          echo "Device type id: ${TYPE_ID}"
+
+          echo "==> Reusing or creating simulator"
+          UDID=$(xcrun simctl list devices available | awk -v n="$DEV" -v r="$RUNTIME_ID" '
+            $0 ~ n && $0 ~ r { gsub(/[()]/,""); print $NF; exit }')
+          if [[ -z "${UDID:-}" ]]; then
+            echo "Creating simulator '${DEV}' (${TYPE_ID}, ${RUNTIME_ID})…"
+            UDID=$(xcrun simctl create "$DEV" "$TYPE_ID" "$RUNTIME_ID")
+          fi
+          echo "UDID: ${UDID}"
+
+          echo "==> Booting and waiting until ready"
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
-          xcrun simctl list devices | grep "$UDID"
+          xcrun simctl list devices | grep "$UDID" || true
+          echo "✅ Simulator ready."
 
       # Appium server is started by WDIO's Appium service in your config
       - name: Run WDIO (smoke on PRs; full fallback)
@@ -80,6 +106,7 @@ jobs:
         with:
           name: allure-results-${{ github.run_id }}
           path: allure-results
+          if-no-files-found: ignore
 
       - name: Upload Allure report (HTML)
         if: always()
@@ -87,6 +114,7 @@ jobs:
         with:
           name: allure-report-${{ github.run_id }}
           path: allure-report
+          if-no-files-found: ignore
 
       - name: Upload logs & screenshots/videos
         if: always()
