@@ -6,3 +6,181 @@ define a suites.smoke block to match the CI command, ensure Allure reporter writ
 bump timeouts for CI (e.g., Mocha timeout: 120000), avoid hardcoded UDIDs/devices, use the Appium service
 (or, if you start Appium manually in CI, set hostname/port/path accordingly), and if you run multiple sims,
 give each cap unique WDA/WebKit ports; since you’re on ESM, export with export const config = { … } rather than module.exports/exports.
+
+
+1) Prep your repo
+
+Project deps
+
+npm i -D appium@^3 @wdio/cli @wdio/appium-service @wdio/mocha-framework @wdio/spec-reporter @wdio/allure-reporter
+
+iOS sample (optional): npm i -D ios-uicatalog
+
+Health tool (optional): npm i -D appium-doctor
+
+Scripts (package.json)
+
+{
+  "scripts": {
+    "wdio": "wdio run wdio.conf.js",
+    "test:ios:ci": "wdio run wdio.conf.js",
+    "allure:generate": "allure generate --clean allure-results || true"
+  }
+}
+
+
+Repo structure (typical)
+
+mobile-automation/
+  test/specs/*.js
+  wdio.conf.js (ESM)
+  .github/workflows/mobile-ci.yml
+
+2) Make wdio.conf.js CI-friendly (ESM)
+
+Normalize OS version; use env-driven paths/ports; separate WDA dirs per device.
+
+Use the Appium service with the same host/port you export.
+
+Example (you already have this shape):
+
+platformVersion = "18.0" (normalized)
+
+'appium:usePrebuiltWDA': true
+
+'appium:derivedDataPath': $XDG_CACHE_HOME/wda-8100 (and …8101)
+
+'appium:wdaLocalPort': 8100 / 8101
+
+'appium:webkitDebugProxyPort': 27753 / 27754
+
+'appium:showXcodeLog': true (great for debugging)
+
+Keep two capabilities (iPhone 16 Pro / iPhone 16 Plus) with optional UDIDs from env.
+
+3) Prepare your self-hosted macOS runner (one-time)
+
+Install Xcode 16 with iOS 18 runtime.
+
+Accept license on the runner: sudo xcodebuild -license accept
+
+Ensure runner user can run simulators & has developer tools in PATH.
+
+4) Add the CI workflow (.github/workflows/mobile-ci.yml)
+
+The workflow should do this—in this order:
+
+Checkout
+
+Writable caches
+
+Set TMPDIR, XDG_CACHE_HOME, and npm_config_cache to workspace paths (and chmod 777).
+
+Select Xcode
+
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+xcodebuild -version
+
+Node setup
+
+actions/setup-node@v4 → Node 20 + npm cache
+
+Install deps
+
+npm ci && npm i -D appium@^3 (if not pinned in package.json)
+
+Install/Update Appium iOS driver
+
+npx appium driver install xcuitest || npx appium driver update xcuitest
+
+Build your app for Simulator
+
+For UIKitCatalog: xcodebuild … -sdk iphonesimulator -destination "platform=iOS Simulator,name=iPhone 16 Pro,OS=18.0" -derivedDataPath ./build-uicatalog build
+
+Export IOS_APP=$GITHUB_WORKSPACE/build-uicatalog/Build/Products/Release-iphonesimulator/UIKitCatalog.app
+
+Create & boot two clean simulators
+
+Resolve runtime for iOS 18, create two devices (Pro/Plus), capture UDID1/UDID2, boot and bootstatus -b.
+
+Export IOS_UDID, IOS_UDID_2 and keep IOS_VERSION: "18" or "18.0" (your config normalizes).
+
+(Option A) Prebuild WDA (fast & stable)
+
+Find WebDriverAgent.xcodeproj under Appium’s driver store (Appium 3 vendors appium-webdriveragent under nested node_modules).
+
+xcodebuild -project …/WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner -destination "id=$IOS_UDID" -derivedDataPath "$XDG_CACHE_HOME/wda-8100" CODE_SIGNING_ALLOWED=NO RUN_CLANG_STATIC_ANALYZER=NO COMPILER_INDEX_STORE_ENABLE=NO build-for-testing
+
+Repeat for device 2 into …/wda-8101.
+
+Ports and derivedData must match your caps.
+
+OR (Option B: simple) set 'appium:usePrebuiltWDA': false in caps and skip this step (slower, but fewer moving parts).
+
+Run tests
+
+npm run test:ios:ci
+
+Publish artifacts
+
+Allure results/report; logs/screenshots/videos to artifacts.
+
+Cleanup
+
+Shutdown/delete created simulators; xcrun simctl delete unavailable.
+
+5) Environment conventions (keep them consistent)
+
+In env: at top of the workflow:
+
+IOS_DEVICE: "iPhone 16 Pro"
+IOS_DEVICE_2: "iPhone 16 Plus"
+IOS_VERSION: "18"             # or "18.0"; config normalizes to "18.0"
+MAX_INSTANCES: "2"
+WDA_PORT_1: "8100"
+WDA_PORT_2: "8101"
+WK_PROXY_PORT_1: "27753"
+WK_PROXY_PORT_2: "27754"
+
+
+And export at runtime:
+
+IOS_APP (built app path)
+
+IOS_UDID, IOS_UDID_2 (from creation step)
+
+6) Parallelism model
+
+Two caps × maxInstances: 1 each.
+
+Unique wdaLocalPort and webkitDebugProxyPort per device.
+
+Separate derivedDataPath per device.
+
+Simulators created with unique names per run (e.g., include ${GITHUB_RUN_ID}).
+
+7) Common pitfalls & quick fixes
+
+Code 65 (xcodebuild): ask for showXcodeLog, prebuild WDA, ensure OS version exactly matches (18.0 vs 18.1), CODE_SIGNING_ALLOWED=NO, clean DerivedData.
+
+WDA path not found: remember Appium 3 keeps WDA inside the driver’s nested node_modules (search under ~/.appium/**/appium-webdriveragent/WebDriverAgent.xcodeproj).
+
+Ports busy: choose new ports and update both WDA prebuild derivedData names and caps.
+
+App path wrong: always ls -la "$IOS_APP" before WDIO step.
+
+Sim not fully booted: use xcrun simctl bootstatus <UDID> -b before prebuild/tests.
+
+8) Local vs CI tips
+
+Local dev: you can skip UDIDs and 'usePrebuiltWDA', run with just deviceName + platformVersion.
+
+CI: pin UDIDs (deterministic), reuse WDA (faster & more stable), and keep logs/artifacts.
+
+9) Minimal troubleshooting commands (drop into a failing job)
+npx appium -v && npx appium driver list --installed
+xcrun simctl list runtimes | grep iOS
+xcrun simctl list devices | grep -E "CI-DEVICE|iPhone 16 (Pro|Plus)"
+ls -la "$IOS_APP"
+lsof -i :8100 -sTCP:LISTEN || true
