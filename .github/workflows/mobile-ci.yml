@@ -45,27 +45,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "DEVELOPER_DIR=$DEVELOPER_DIR"
-          sudo xcode-select -s "$DEVELOPER_DIR"
+
+          # DEVELOPER_DIR may not be set in this shell; guard for nounset and auto-detect
+          DEV_DIR="${DEVELOPER_DIR:-}"
+          if [[ -z "$DEV_DIR" ]]; then
+            DEV_DIR="$(xcode-select -p || true)"
+          fi
+          if [[ -z "$DEV_DIR" || ! -d "$DEV_DIR" ]]; then
+            echo "DEVELOPER_DIR not set; probing /Applications for an Xcode with iOS runtimes…"
+            CANDIDATE=""
+            for X in /Applications/Xcode_*.app /Applications/Xcode.app; do
+              [[ -d "$X/Contents/Developer" ]] || continue
+              sudo xcode-select -s "$X/Contents/Developer"
+              if xcrun simctl list runtimes | grep -qi "iOS"; then
+                CANDIDATE="$X/Contents/Developer"
+                break
+              fi
+            done
+            if [[ -z "$CANDIDATE" ]]; then
+              echo "❌ No suitable Xcode found on this runner."
+              exit 1
+            fi
+            DEV_DIR="$CANDIDATE"
+          fi
+
+          echo "Using DEVELOPER_DIR=$DEV_DIR"
+          sudo xcode-select -s "$DEV_DIR"
+
           xcodebuild -version
           sudo xcodebuild -runFirstLaunch || true
 
           echo "== RUNTIMES AFTER SELECTION =="
           xcrun simctl list runtimes || true
-
-          # Fallback scan if the image has multiple Xcodes and no iOS runtimes found yet
           if ! xcrun simctl list runtimes | grep -qi "iOS"; then
-            echo "No iOS runtimes detected via current DEVELOPER_DIR. Scanning /Applications…"
-            for X in /Applications/Xcode_*.app; do
-              echo "Trying $X"
-              sudo xcode-select -s "$X/Contents/Developer"
-              xcodebuild -version
-              sudo xcodebuild -runFirstLaunch || true
-              if xcrun simctl list runtimes | grep -qi "iOS"; then
-                echo "✅ Found iOS runtimes under $X"
-                break
-              fi
-            done
+            echo "❌ Still no iOS runtimes visible after selection."
+            exit 1
           fi
 
       - name: Use Node.js 20 (with npm cache)
