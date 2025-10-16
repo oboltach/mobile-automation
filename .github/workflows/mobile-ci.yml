@@ -11,14 +11,20 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Device names that exist on your Mac (from your listing)
   IOS_DEVICE: "iPhone 16 Pro"
   IOS_DEVICE_2: "iPhone 16 Plus"
-  IOS_VERSION: "18"                        # major; we'll match iOS-18-*
-  IOS_APP: "./apps/UIKitCatalog-iphonesimulator.app"
-  NODE_OPTIONS: "--max-old-space-size=4096"
-  MAX_INSTANCES: "2"
 
-  # Distinct per-device ports (match your wdio.conf.js)
+  # Major iOS version; the script picks a matching runtime ID (e.g. com.apple.CoreSimulator.SimRuntime.iOS-18-0)
+  IOS_VERSION: "18"
+
+  # Your app under test; keep your fallback path in wdio.conf.js if needed
+  IOS_APP: "./apps/UIKitCatalog-iphonesimulator.app"
+
+  NODE_OPTIONS: "--max-old-space-size=4096"
+  MAX_INSTANCES: "2"      # WDIO will run both caps concurrently
+
+  # Distinct per-device ports (must match your wdio.conf.js)
   WDA_PORT_1: "8100"
   WDA_PORT_2: "8101"
   WK_PROXY_PORT_1: "27753"
@@ -27,39 +33,28 @@ env:
 jobs:
   ios-tests:
     name: iOS • WDIO + Appium + Allure (2 sims, self-hosted)
-    runs-on: [self-hosted, macOS, Xcode16, iOS18]   # match your runner labels
+    # ⬇️ These labels MUST match your runner's labels (set during ./config.sh)
+    runs-on: [self-hosted, macOS, Xcode16, iOS18]
     timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Pick the Xcode that actually exposes an iOS-18 runtime (prefer 16.1 if present)
-      - name: Select Xcode with iOS 18 runtime
+      # Ensure your Xcode at /Applications/Xcode.app is selected (change path if you use Xcode_16.1.app)
+      - name: Ensure Xcode is active
         shell: bash
         run: |
           set -euo pipefail
-          try_select() {
-            local devdir="$1"
-            if [[ -d "$devdir" ]]; then
-              sudo xcode-select -s "$devdir"
-              xcodebuild -version
-              sudo xcodebuild -runFirstLaunch || true
-              if xcrun simctl list runtimes | grep -qi 'com.apple.CoreSimulator.SimRuntime.iOS-18'; then
-                echo "✅ Using Xcode at $devdir (iOS 18 runtime visible)"
-                echo "DEVELOPER_DIR=$devdir" >> "$GITHUB_ENV"
-                return 0
-              fi
-            fi
-            return 1
-          }
-
-          # Try common locations in priority order
-          try_select "/Applications/Xcode_16.1.app/Contents/Developer" || \
-          try_select "/Applications/Xcode.app/Contents/Developer" || {
-            echo "❌ Could not find an Xcode with iOS 18 runtime. Ensure the runtime is installed in Xcode → Settings → Platforms."
-            exit 1
-          }
+          DEV_DIR="/Applications/Xcode.app/Contents/Developer"
+          if [[ ! -d "$DEV_DIR" ]]; then
+            echo "❌ Xcode dev dir not found at $DEV_DIR"; exit 1
+          fi
+          echo "Selecting DEVELOPER_DIR=${DEV_DIR}"
+          sudo xcode-select -s "$DEV_DIR"
+          xcodebuild -version
+          sudo xcodebuild -runFirstLaunch || true
+          echo "DEVELOPER_DIR=${DEV_DIR}" >> "$GITHUB_ENV"
 
       - name: Use Node.js 20 (with npm cache)
         uses: actions/setup-node@v4
@@ -86,56 +81,62 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set -x
 
-          # Re-select Xcode in this shell
+          # Re-select Xcode in THIS shell
           DEV_DIR="${DEVELOPER_DIR:-$(xcode-select -p || true)}"
-          [[ -n "$DEV_DIR" && -d "$DEV_DIR" ]] && sudo xcode-select -s "$DEV_DIR"
+          [[ -n "${DEV_DIR}" && -d "${DEV_DIR}" ]] && sudo xcode-select -s "${DEV_DIR}"
           echo "Active DEVELOPER_DIR: $(xcode-select -p)"
           xcodebuild -version
 
           echo "== RUNTIMES (simctl) =="
           xcrun simctl list runtimes || true
 
-          # Collect all iOS runtime IDs except 'unavailable'
+          # ---- Pick a runtime using simctl (exclude only 'unavailable') ----
+          desired_major="${IOS_VERSION}"   # e.g. "18"
           runtime_lines="$(xcrun simctl list runtimes | awk 'BEGIN{IGNORECASE=1} /iOS/ && $0 !~ /unavailable/ { gsub(/[()]/,""); print $0 }' || true)"
-          echo "Runtime lines:"
-          echo "${runtime_lines}"
-
-          # Prefer the desired major (e.g. iOS-18-*); else take the last visible iOS runtime
-          RUNTIME_ID="$(echo "${runtime_lines}" | awk '{print $NF}' | grep -E "iOS-${IOS_VERSION}($|-)" | head -n 1 || true)"
+          RUNTIME_ID="$(echo "${runtime_lines}" | awk '{print $NF}' | grep -E "iOS-${desired_major}($|-)" | head -n 1 || true)"
           if [[ -z "${RUNTIME_ID}" ]]; then
+            # fallback: take the last available iOS runtime ID (often latest)
             RUNTIME_ID="$(echo "${runtime_lines}" | awk '{print $NF}' | tail -n 1 || true)"
           fi
           if [[ -z "${RUNTIME_ID}" ]]; then
             echo "❌ No iOS runtime visible via simctl. Check Xcode selection & runtime install."
+            echo "Debug dump:"
+            echo "${runtime_lines}"
             exit 1
           fi
           echo "Using runtime: ${RUNTIME_ID}"
+          # ------------------------------------------------------------------
 
-          # Resolve device type IDs robustly (no strict regex anchors)
           resolve_type_id() {
             local name="$1"
-            # Grep the exact device name line (first match), then cut the (...) payload
+            # Grab the exact device-name line then extract the (...) identifier
             local line
             line="$(xcrun simctl list devicetypes | grep -m1 -F "$name" || true)"
-            if [[ -z "$line" ]]; then
-              echo ""
-              return 0
-            fi
+            [[ -z "$line" ]] && { echo ""; return 0; }
             echo "$line" | sed -n 's/.*(\(com\.apple\.CoreSimulator\.SimDeviceType\.[^)]*\)).*/\1/p'
           }
 
+          # Clean up any stale CI simulators from prior runs (best-effort)
+          CLEAN_PREFIX_1="${IOS_DEVICE} (CI ${GITHUB_RUN_ID}-1)"
+          CLEAN_PREFIX_2="${IOS_DEVICE_2} (CI ${GITHUB_RUN_ID}-2)"
+          for NAME in "$CLEAN_PREFIX_1" "$CLEAN_PREFIX_2"; do
+            xcrun simctl list devices | awk -v n="$NAME" -F '[()]' '$0 ~ n {print $2}' | while read -r oldid; do
+              [[ -n "$oldid" ]] && xcrun simctl delete "$oldid" || true
+            done
+          done
+          # prune clearly unavailable
+          xcrun simctl delete unavailable || true
+
           TYPE_ID_1="$(resolve_type_id "${IOS_DEVICE}")"
           TYPE_ID_2="$(resolve_type_id "${IOS_DEVICE_2}")"
-          echo "TYPE_ID_1=$TYPE_ID_1"
-          echo "TYPE_ID_2=$TYPE_ID_2"
-
           if [[ -z "$TYPE_ID_1" || -z "$TYPE_ID_2" ]]; then
             echo "❌ Could not resolve one or both device type IDs."
             xcrun simctl list devicetypes
             exit 1
           fi
+          echo "TYPE_ID_1=$TYPE_ID_1"
+          echo "TYPE_ID_2=$TYPE_ID_2"
 
           create_and_boot() {
             local dev_name="$1"
@@ -144,25 +145,14 @@ jobs:
 
             local sim_name="${dev_name} (CI ${GITHUB_RUN_ID}-${idx})"
             echo "==> Creating simulator '${sim_name}' with runtime ${RUNTIME_ID} and type ${type_id}"
-            # If a previous run left a device with same name, delete it to avoid conflicts
-            xcrun simctl delete "${sim_name}" || true
 
-            local udid
-            set +e
-            udid="$(xcrun simctl create "${sim_name}" "${type_id}" "${RUNTIME_ID}" 2>&1)"
-            local rc=$?
-            set -e
-            echo "simctl create output: ${udid}"
-            if [[ $rc -ne 0 ]]; then
-              echo "❌ simctl create failed (rc=${rc}). See output above."
-              exit $rc
-            fi
-            # 'udid' contains the UDID when rc==0; otherwise it's an error string
-            if ! echo "$udid" | grep -Eq '^[0-9A-F-]+$'; then
-              # Some Xcode versions print the UDID plus extra text; extract with grep
-              udid="$(echo "$udid" | grep -Eo '[0-9A-F-]{36}' | head -n1 || true)"
-            fi
+            # Create returns bare UDID on success; tolerate extra text
+            local out udid
+            out="$(xcrun simctl create "${sim_name}" "${type_id}" "${RUNTIME_ID}" 2>&1 || true)"
+            udid="$(echo "$out" | grep -Eo '[0-9A-F-]{36}' | head -n1 || true)"
             if [[ -z "$udid" ]]; then
+              echo "simctl create raw output:"
+              echo "$out"
               echo "❌ Could not parse UDID from simctl create output."
               exit 1
             fi
@@ -171,20 +161,22 @@ jobs:
             echo "==> Booting and waiting"
             xcrun simctl boot "${udid}" || true
             xcrun simctl bootstatus "${udid}" -b
-
             echo "${udid}"
           }
 
           UDID1="$(create_and_boot "${IOS_DEVICE}"   "${TYPE_ID_1}" 1)"
           UDID2="$(create_and_boot "${IOS_DEVICE_2}" "${TYPE_ID_2}" 2)"
 
-          echo "IOS_UDID=${UDID1}"   >> "$GITHUB_ENV"
-          echo "IOS_UDID_2=${UDID2}" >> "$GITHUB_ENV"
-
           echo "✅ Both simulators are ready."
           xcrun simctl list devices | sed -n '1,200p' || true
 
-      # Appium server is started by WDIO's Appium service in your config
+          # --- Write env vars atomically in proper NAME=VALUE format ---
+          {
+            echo "IOS_UDID=${UDID1}"
+            echo "IOS_UDID_2=${UDID2}"
+          } >> "$GITHUB_ENV"
+
+      # Appium server is started by the WDIO Appium service in your config
       - name: Run WDIO (smoke on PRs; full fallback)
         run: npm run test:ios:ci
 
