@@ -58,7 +58,7 @@ jobs:
           SCHEME="UIKitCatalog"
           DERIVED="$PWD/build-uicatalog"
 
-          # Force a concrete simulator destination to produce a proper .app for iOS 18
+          # Build for a concrete iOS 18 simulator so we get a proper .app
           xcodebuild \
             -project "$PROJ" \
             -scheme "$SCHEME" \
@@ -68,13 +68,18 @@ jobs:
             -derivedDataPath "$DERIVED" \
             build
 
-          APP_PATH="$DERIVED/Build/Products/Release-iphonesimulator/UIKitCatalog-iphonesimulator.app"
-          if [[ ! -d "$APP_PATH" ]]; then
-            echo "❌ App not found at: $APP_PATH"
-            echo "Contents of Products:"
-            ls -R "$DERIVED/Build/Products" || true
+          PRODUCTS="$DERIVED/Build/Products/Release-iphonesimulator"
+          # Find the built .app (supports both UIKitCatalog.app and UIKitCatalog-iphonesimulator.app)
+          APP_PATH="$(find "$PRODUCTS" -maxdepth 1 -type d -name 'UIKitCatalog*.app' | head -n1 || true)"
+
+          if [[ -z "${APP_PATH:-}" || ! -d "$APP_PATH" ]]; then
+            echo "❌ Could not locate built app under: $PRODUCTS"
+            echo "Contents:"
+            ls -la "$PRODUCTS" || true
             exit 1
           fi
+
+          echo "✅ Found app: $APP_PATH"
           echo "IOS_APP=$APP_PATH" >> "$GITHUB_ENV"
 
       ##############################################
