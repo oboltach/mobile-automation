@@ -6,10 +6,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-concurrency:
-  group: mobile-${{ github.ref }}-${{ github.job }}
-  cancel-in-progress: true
-
 env:
   IOS_DEVICE: "iPhone 16 Pro"
   IOS_DEVICE_2: "iPhone 16 Plus"
@@ -26,6 +22,9 @@ jobs:
     name: iOS • WDIO + Appium + Allure (Self-Hosted)
     runs-on: [self-hosted, macOS]
     timeout-minutes: 60
+    concurrency:
+      group: ios-${{ github.ref }}          # cancels only older iOS runs on same ref
+      cancel-in-progress: true
 
     steps:
       - name: Checkout
@@ -262,6 +261,9 @@ jobs:
     name: Android • WDIO + Appium + Allure (Self-Hosted)
     runs-on: [self-hosted, macOS]
     timeout-minutes: 60
+    concurrency:
+      group: android-${{ github.ref }}      # cancels only older Android runs on same ref
+      cancel-in-progress: true
     # uncomment next line to run Android only after iOS finishes:
     # needs: ios-tests
     env:
