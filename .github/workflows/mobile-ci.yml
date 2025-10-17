@@ -323,15 +323,19 @@ jobs:
                    "$HOME/Library/Android/sdk/platform-tools" \
                    "$HOME/Library/Android/sdk/cmdline-tools"
 
-      - name: Install Android SDK components
+      - name: Install Android SDK components (CI Safe)
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --install "cmdline-tools;latest" || true
-          yes | sdkmanager --install "platform-tools" "emulator" || true
-          yes | sdkmanager --install "platforms;android-${ANDROID_PLATFORM_API}" \
-                                      "system-images;android-${ANDROID_PLATFORM_API};google_apis;x86_64"
-          yes | sdkmanager --licenses
+          sdkmanager --sdk_root=$ANDROID_HOME --install \
+            "cmdline-tools;latest" \
+            "platform-tools" \
+            "emulator" \
+            "platforms;android-${ANDROID_PLATFORM_API}" \
+            "system-images;android-${ANDROID_PLATFORM_API};google_apis;x86_64" || true
+
+          # Accept all licenses non-interactively
+          yes "y" | sdkmanager --sdk_root=$ANDROID_HOME --licenses || true
 
       - name: Create AVD (idempotent)
         shell: bash
