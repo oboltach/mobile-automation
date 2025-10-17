@@ -184,6 +184,32 @@ export const config = {
   // Only load capabilities for the selected PLATFORM.
   // Default is 'ios' to keep CI behavior unchanged.
   //
+    // ===============  STABILITY SETTINGS  =================
+  bail: 0,                              // Do not stop after first spec failure
+
+  specFileRetries: Number(process.env.SPEC_RETRIES || 1),
+  specFileRetriesDelay: 5,
+  specFileRetriesDeferred: true,
+
+  connectionRetryCount: 3,
+  connectionRetryTimeout: 180000,
+  waitforTimeout: 15000,
+
+  // Automatically capture screenshots on failure
+  afterTest: function (test, context, { error, result, duration, passed }) {
+    if (!passed) {
+      try {
+        browser.takeScreenshot();
+      } catch (e) {}
+    }
+  },
+
+  // Optional: implicit wait to stabilize UIKitCatalog Launch
+  before: function () {
+    try {
+      browser.setImplicitTimeout(8000);
+    } catch (e) {}
+  },
   capabilities: PLATFORM === 'android' ? androidCaps : iosCaps,
 
   logLevel: 'info',
@@ -212,7 +238,11 @@ export const config = {
     }]
   ],
 
-  mochaOpts: { ui: 'bdd', timeout: 120000 },
+  mochaOpts: {
+    ui: 'bdd',
+    timeout: 120000,
+    retries: Number(process.env.MOCHA_RETRIES || 1)
+  },
 
 
   //
