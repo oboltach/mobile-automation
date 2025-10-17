@@ -1,4 +1,4 @@
-name: Mobile Automation CI (Self-Hosted iOS 18)
+name: Mobile Automation CI (Self-Hosted iOS 18 + Android 14)
 
 on:
   pull_request:
@@ -59,7 +59,6 @@ jobs:
       - name: Install NPM dependencies (incl. Appium 3 locally)
         run: |
           npm ci --ignore-scripts
-          # ensure appium 3 is present locally (if not already in package.json)
           npm i -D appium@^3
 
       - name: Install/Update Appium iOS driver
@@ -98,7 +97,6 @@ jobs:
           echo "✅ Built app: $APP_PATH"
           echo "IOS_APP=$APP_PATH" >> "$GITHUB_ENV"
 
-      # Create and boot two clean iOS 18 simulators, export UDIDs
       - name: Create & Boot Simulators
         id: sims
         shell: bash
@@ -109,7 +107,6 @@ jobs:
             echo "❌ No iOS $IOS_VERSION runtime visible"; xcrun simctl list runtimes; exit 1
           fi
 
-          # Resolve device type identifiers
           resolve_type() { xcrun simctl list devicetypes | grep -m1 -F "$1" | sed -n 's/.*(\(com.apple[^)]*\)).*/\1/p'; }
           TYPE1="$(resolve_type "$IOS_DEVICE")"
           TYPE2="$(resolve_type "$IOS_DEVICE_2")"
@@ -120,13 +117,11 @@ jobs:
           NAME1="CI-DEVICE-1-${GITHUB_RUN_ID}"
           NAME2="CI-DEVICE-2-${GITHUB_RUN_ID}"
 
-          # Best-effort cleanup of previous devices with the same names
           for n in "$NAME1" "$NAME2"; do
             xcrun simctl list devices | awk -v p="$n" -F '[()]' '$0 ~ p {print $2}' | xargs -I{} xcrun simctl delete {} || true
           done
           xcrun simctl delete unavailable || true
 
-          # Create devices and capture UDIDs
           create_only() {
             local name="$1" type="$2"
             local out udid
@@ -140,7 +135,6 @@ jobs:
           UDID1="$(create_only "$NAME1" "$TYPE1")"
           UDID2="$(create_only "$NAME2" "$TYPE2")"
 
-          # Boot and wait
           xcrun simctl boot "$UDID1" >/dev/null 2>&1 || true
           xcrun simctl boot "$UDID2" >/dev/null 2>&1 || true
           xcrun simctl bootstatus "$UDID1" -b >/dev/null 2>&1
@@ -167,13 +161,11 @@ jobs:
           APP_HOME="${APPIUM_HOME:-$HOME/.appium}"
 
           echo "🔎 Searching for WebDriverAgent.xcodeproj under $APP_HOME ..."
-          # Look for the WDA project inside the XCUITest driver’s nested node_modules (Appium 3 layout)
           WDA_PROJECT="$(find "$APP_HOME" \
             -type d -name WebDriverAgent.xcodeproj \
             -path "*/node_modules/*appium*webdriveragent*/WebDriverAgent.xcodeproj" \
             -print -quit 2>/dev/null || true)"
 
-          # Fallback: add the Appium driver store to NODE_PATH and resolve via Node
           if [[ -z "${WDA_PROJECT:-}" ]]; then
             echo "ℹ️ Trying NODE_PATH resolution for appium-webdriveragent"
             export NODE_PATH="$APP_HOME/node_modules${NODE_PATH:+:$NODE_PATH}"
@@ -196,7 +188,6 @@ jobs:
 
           echo "✅ Using WDA project at: $WDA_PROJECT"
 
-          # DerivedData paths must match your caps (wda-8100 / wda-8101)
           WDA_DERIVED_1="$XDG_CACHE_HOME/wda-${WDA_PORT_1:-8100}"
           WDA_DERIVED_2="$XDG_CACHE_HOME/wda-${WDA_PORT_2:-8101}"
           mkdir -p "$WDA_DERIVED_1" "$WDA_DERIVED_2"
@@ -220,7 +211,6 @@ jobs:
             -derivedDataPath "$WDA_DERIVED_2" \
             CODE_SIGNING_ALLOWED=NO \
             build-for-testing
-
 
       - name: Run WDIO Tests
         run: npm run test:ios:ci
@@ -267,3 +257,160 @@ jobs:
             done
           done
           xcrun simctl delete unavailable || true
+
+  android-tests:
+    name: Android • WDIO + Appium + Allure (Self-Hosted)
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 60
+    # uncomment next line to run Android only after iOS finishes:
+    # needs: ios-tests
+    env:
+      WD_PORT: "4725"                  # separate Appium port for Android
+      MAX_INSTANCES: "2"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+      AVD_NAME: "Pixel_7_API_34"
+      ANDROID_PLATFORM_API: "34"       # Android 14
+      ANDROID_PLATFORM_VERSION: "14"
+      SYS_PORT_1: "8200"
+      SYS_PORT_2: "8201"
+      CDP_PORT_1: "9515"
+      CDP_PORT_2: "9516"
+      ANDROID_APP: "${{ github.workspace }}/apps/ApiDemos-debug.apk"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set writable temp/cache env
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$GITHUB_WORKSPACE/.cache" >> "$GITHUB_ENV"
+          echo "npm_config_cache=$GITHUB_WORKSPACE/.npm" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP" "$GITHUB_WORKSPACE/.cache" "$GITHUB_WORKSPACE/.npm"
+          chmod -R 777 "$RUNNER_TEMP" "$GITHUB_WORKSPACE/.cache" "$GITHUB_WORKSPACE/.npm"
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps (incl. Appium 3)
+        run: |
+          npm ci --ignore-scripts
+          npm i -D appium@^3
+
+      - name: Install/Update Appium Android driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx appium driver install uiautomator2 || npx appium driver update uiautomator2
+          npx appium -v
+          npx appium driver list --installed
+
+      - name: Set Android SDK paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=$HOME/Library/Android/sdk" >> "$GITHUB_ENV"
+          {
+            echo "PATH=$HOME/Library/Android/sdk/platform-tools:$HOME/Library/Android/sdk/emulator:$HOME/Library/Android/sdk/cmdline-tools/latest/bin:$PATH"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$HOME/Library/Android/sdk" \
+                   "$HOME/Library/Android/sdk/emulator" \
+                   "$HOME/Library/Android/sdk/platform-tools" \
+                   "$HOME/Library/Android/sdk/cmdline-tools"
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --install "cmdline-tools;latest" || true
+          yes | sdkmanager --install "platform-tools" "emulator" || true
+          yes | sdkmanager --install "platforms;android-${ANDROID_PLATFORM_API}" \
+                                      "system-images;android-${ANDROID_PLATFORM_API};google_apis;x86_64"
+          yes | sdkmanager --licenses
+
+      - name: Create AVD (idempotent)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if avdmanager list avd | grep -q "$AVD_NAME"; then
+            echo "✔ AVD $AVD_NAME already exists"
+          else
+            echo "no" | avdmanager create avd \
+              --name "$AVD_NAME" \
+              --package "system-images;android-${ANDROID_PLATFORM_API};google_apis;x86_64" \
+              --device "pixel_7"
+          fi
+
+      - name: Start emulator (headless) & wait
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup emulator -avd "$AVD_NAME" -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect >/dev/null 2>&1 &
+          adb wait-for-device
+          for i in {1..120}; do
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then break; fi
+            sleep 2
+          done
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb devices
+
+      - name: Ensure sample APK (ApiDemos)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/apps"
+          if [ ! -s "$ANDROID_APP" ]; then
+            echo "Fetching ApiDemos APK..."
+            curl -L -o "$ANDROID_APP" \
+              https://github.com/appium/android-apidemos/releases/latest/download/ApiDemos-debug.apk
+          fi
+          unzip -l "$ANDROID_APP" >/dev/null
+
+      - name: Run WDIO (Android suite)
+        env:
+          PLATFORM: android
+        run: |
+          npx wdio wdio.conf.js --suite android
+
+      - name: Generate Allure HTML
+        if: always()
+        run: npm run allure:generate
+
+      - name: Upload Allure Results (Android)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-android-${{ github.run_id }}
+          path: allure-results
+          if-no-files-found: ignore
+
+      - name: Upload Allure Report (Android)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report-android-${{ github.run_id }}
+          path: allure-report
+          if-no-files-found: ignore
+
+      - name: Upload Android logs/artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-artifacts-${{ github.run_id }}
+          path: |
+            logs
+            artifacts
+          if-no-files-found: ignore
+
+      - name: Kill emulator (cleanup)
+        if: always()
+        shell: bash
+        run: |
+          adb -s emulator-5554 emu kill || true
