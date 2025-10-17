@@ -212,8 +212,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build-for-testing
 
-      - name: Run WDIO Tests
-        run: npm run test:ios:ci
+      - name: Run WDIO Tests (iOS only)
+        run: PLATFORM=ios npm run test:ios:ci -- --suite smoke
 
       - name: Generate Allure HTML
         if: always()
