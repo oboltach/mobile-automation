@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: mobile-${{ github.ref }}-${{ github.job }}
   cancel-in-progress: true
 
 env:
