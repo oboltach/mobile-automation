@@ -61,6 +61,10 @@ export const config = {
     ? ['./test/specs/android/**']
     : [],
 
+  suites: {
+    smoke: ['./test/specs/**/*smoke*.{js,ts}'],
+    android: ['./test/specs/android/**/*.spec.js'],
+  },
   maxInstances: Number(process.env.MAX_INSTANCES || 2),
 
   capabilities: isAndroid
@@ -149,9 +153,16 @@ export const config = {
   connectionRetryTimeout: 180000,
   connectionRetryCount: 3,
 
-  reporters: ['spec'],
+  services: [[
+    'appium',
+    { args: { address: '127.0.0.1', port: APPIUM_PORT } }
+  ]],
 
   framework: 'mocha',
+  reporters: [
+    'spec',
+    ['allure', { outputDir: 'allure-results', disableWebdriverStepsReporting: true, disableWebdriverScreenshotsReporting: false }]
+  ],
   mochaOpts: {
     ui: 'bdd',
     timeout: 120000
