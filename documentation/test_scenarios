@@ -1,0 +1,68 @@
+Two example features (Biometric + SMS OTP login, and Shopping Cart),
+then all the cross-cutting concerns (coverage, network, performance, security, telemetry, tooling, and exit criteria).
+_____________________________________________________________________
+0) Scope & Assumptions
+
+Platforms: iOS (16–18), Android (12–15); phones first, sanity on tablets.
+
+Builds: Debug + Release; Feature flags for OTP and biometrics.
+
+Envs: Staging mirrors prod auth flows (rate limits, OTP TTL, fraud checks); test accounts seeded.
+
+1) Risk-Based Prioritization (what I’d say up front)
+
+Highest risk: authentication correctness & abuse prevention (lockouts, replay, rate-limits), payment/price integrity, session management.
+
+Medium: UX friction, device/OS fragmentation, flakiness from network timing.
+
+Lower: cosmetic issues that don’t block core flows.
+_____________________________________________________________________
+
+A) Login with Biometric + SMS OTP
+A1) Functional Test Design (happy paths first)
+
+First-time login (no biometric enrolled)
+
+Enter valid user + password → prompt for SMS OTP → enter valid OTP → success → optional “Enable FaceID/TouchID” prompt → accept → relaunch app → biometric unlock succeeds.
+
+Returning user (biometric enrolled)
+
+Cold start → biometric prompt → success → lands on home.
+
+Fallback path
+
+Biometric fails/unavailable → fallback to password + OTP → success.
+
+Negative & Edge Cases (high-value)
+
+OTP wrong (single digit wrong; completely wrong; expired TTL).
+
+OTP resent: enforce cooldown, last-code-wins.
+
+OTP delivery failures: show retry guidance; “call me” option if supported.
+
+Rate limiting: too many OTP requests → friendly throttle message; too many failed OTP entries → temporary lockout; verify unlock timer.
+
+Device time skew (>2 mins): OTP validation behavior, error copy.
+
+Biometric permutations:
+
+User cancels biometric sheet; retries once; locks out after N failed attempts → fallback works.
+
+Device with multiple biometrics enrolled (two faces/fingers).
+
+Biometric disabled in OS settings between sessions.
+
+Session cases:
+
+Token expiry on background → foreground requires re-auth.
+
+Logout clears tokens & cached screens.
+
+Accessibility:
+
+Biometric & OTP screens fully navigable via VoiceOver/TalkBack; focus order; semantics on code inputs; sufficient contrast.
+
+Localization:
+
+OTP numbers and LTR/RTL layouts (Arabic/Hebrew) render correctly; no truncation.

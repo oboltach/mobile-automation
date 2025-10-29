@@ -6,12 +6,10 @@
   "scripts": {
     "wdio": "wdio",
     "test": "wdio wdio.conf.js",
-    "test:ios": "wdio wdio.conf.js",
     "test:ios": "PLATFORM=ios wdio wdio.conf.js --suite smoke",
-    "test:android": "PLATFORM=android wdio wdio.conf.js --suite android",
+    "test:android": "wdio wdio.conf.js --spec ./test/specs/android",
     "test:ios:all": "wdio wdio.conf.js",
     "test:ios:ci": "npm run test:ios:smoke || npm run test:ios:all",
-    "test:android": "wdio wdio.conf.js --spec ./test/specs/android",
     "allure:generate": "allure generate --clean ./allure-results -o ./allure-report",
     "allure:open": "allure open ./allure-report",
     "clean:allure": "rm -rf ./allure-results ./allure-report",
@@ -31,6 +29,7 @@
     "appium": "^3.1.0",
     "appium-uiautomator2-driver": "^5.0.5",
     "appium-xcuitest-driver": "^10.2.1",
-    "ios-uicatalog": "^3.8.0"
+    "ios-uicatalog": "^3.8.0",
+    "wdio-junit-reporter": "^0.4.4"
   }
 }

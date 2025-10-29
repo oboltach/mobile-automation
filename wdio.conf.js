@@ -161,7 +161,19 @@ export const config = {
   framework: 'mocha',
   reporters: [
     'spec',
-    ['allure', { outputDir: 'allure-results', disableWebdriverStepsReporting: true, disableWebdriverScreenshotsReporting: false }]
+    ['allure', { outputDir: 'allure-results', disableWebdriverStepsReporting: true, disableWebdriverScreenshotsReporting: false }],
+    ['junit', {
+      outputDir: 'reports/junit',
+      outputFileFormat: function (opts) {
+        // one file per worker, include device/os if running on a farm
+        const dev = process.env.DEVICE_NAME?.replace(/\s+/g, '_') || 'local';
+        const os  = process.env.OS_VERSION || 'na';
+        return `junit-${opts.cid}-${dev}-${os}.xml`;
+      },
+      suiteNameFormat: /[^a-zA-Z0-9]+/g,   // sanitize suite names
+      classNameFormat: ({ file }) => file?.replace(process.cwd(), '') || '',
+      addFileAttribute: true
+    }]
   ],
   mochaOpts: {
     ui: 'bdd',

@@ -10,3 +10,14 @@
   "appium:newCommandTimeout": 240,
   "appium:autoAcceptAlerts": true
 }
+
+                        5️⃣ Testing Focus
+Area	                           Native App	          Mobile Web
+Installation / Updates           ✅ Required	         ❌ Not applicable
+Device Permissions	             ✅ Yes	             ❌ No
+Performance (CPU, memory)	       ✅ Deep	⚠️            Browser limited
+Network Conditions	             ✅ Offline/Online	   ✅ Mostly online
+Browser Compatibility	           ❌ Platform only     ✅ Multi-browser
+
+Native app testing = device-level, hardware, performance, offline.
+Mobile web testing = browser behavior, responsiveness, network.
